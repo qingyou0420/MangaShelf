@@ -57,3 +57,21 @@ pub fn find_mangacon_windows() -> Vec<MangaConWindow> {
     }
     windows
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a visible MangaCon.exe window on Windows"]
+    fn manual_detects_running_mangacon_window() {
+        let windows = find_mangacon_windows();
+
+        assert!(
+            windows
+                .iter()
+                .any(|window| window.title.contains("漫画控") || window.title.contains("MangaCon")),
+            "expected a visible MangaCon window, found: {windows:?}"
+        );
+    }
+}

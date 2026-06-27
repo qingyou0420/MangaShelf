@@ -13,7 +13,7 @@ import { Dashboard } from "./features/dashboard/Dashboard";
 import { LibraryView } from "./features/library/LibraryView";
 import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
-import { approvedDefaultPaths, sampleFavorite } from "./test/fixtures";
+import { approvedDefaultPaths, sampleFavorite } from "./lib/defaults";
 
 type AppSection = "dashboard" | "library" | "automation" | "reader" | "settings";
 

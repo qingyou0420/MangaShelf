@@ -409,6 +409,55 @@ h2 {
   font-size: 13px;
 }
 
+.mangacon-link-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.link-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.link-state {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.link-state div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.link-state dt {
+  color: #647084;
+  font-size: 13px;
+}
+
+.link-state dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.window-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.window-list span {
+  border: 1px solid #d9e1eb;
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: #f8fafc;
+  color: #39465a;
+  font-size: 13px;
+}
+
 .timeline {
   display: grid;
   gap: 10px;
@@ -448,6 +497,11 @@ h2 {
 .run-state button {
   min-height: 32px;
   padding: 0 10px;
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.65;
 }
 
 .reader-view {
@@ -591,6 +645,7 @@ h2 {
   .metric-grid,
   .two-column,
   .automation-grid,
+  .link-state,
   .reader-shell {
     grid-template-columns: 1fr;
   }
