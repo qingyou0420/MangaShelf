@@ -62,6 +62,23 @@ export interface OpenFavoritesResult {
   badges: BadgePoint[];
 }
 
+export interface OpenComicResult {
+  window: MangaConWindow;
+  badge: BadgePoint;
+  clicked: WindowPoint;
+  width: number;
+  height: number;
+  remainingBadges: BadgePoint[];
+}
+
+export interface DetailUpdateScanResult {
+  window: MangaConWindow;
+  width: number;
+  height: number;
+  badges: BadgePoint[];
+  scrollAttempts: number;
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }

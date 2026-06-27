@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::mangacon::{
-    badge::{detect_favorites_update_badges_from_rgba, BadgePoint},
+    badge::{
+        detect_detail_chapter_update_badges_from_rgba, detect_favorites_update_badges_from_rgba,
+        BadgePoint,
+    },
     window::{find_mangacon_windows, MangaConWindow},
 };
 
@@ -59,6 +62,43 @@ pub fn scan_mangacon_badges() -> Result<MangaConBadgeScanResult, WindowCaptureEr
             continue;
         };
         let sample = detect_favorites_update_badges_from_rgba(
+            image.width as usize,
+            image.height as usize,
+            &image.rgba,
+        );
+        let scan = MangaConBadgeScanResult {
+            window,
+            width: image.width,
+            height: image.height,
+            badges: sample.badges,
+        };
+
+        let current_area = u64::from(scan.width) * u64::from(scan.height);
+        let best_area = best_scan
+            .as_ref()
+            .map(|best| u64::from(best.width) * u64::from(best.height))
+            .unwrap_or(0);
+        if current_area > best_area {
+            best_scan = Some(scan);
+        }
+    }
+
+    best_scan.ok_or(WindowCaptureError::NoCapturableMangaConWindow)
+}
+
+pub fn scan_mangacon_detail_chapter_badges() -> Result<MangaConBadgeScanResult, WindowCaptureError>
+{
+    let windows = find_mangacon_windows();
+    if windows.is_empty() {
+        return Err(WindowCaptureError::NoMangaConWindow);
+    }
+
+    let mut best_scan: Option<MangaConBadgeScanResult> = None;
+    for window in windows {
+        let Ok(image) = capture_window_rgba(window.hwnd) else {
+            continue;
+        };
+        let sample = detect_detail_chapter_update_badges_from_rgba(
             image.width as usize,
             image.height as usize,
             &image.rgba,

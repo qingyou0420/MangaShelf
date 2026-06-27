@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AutomationRunStatus,
+  DetailUpdateScanResult,
   ImportFavoritesResult,
   LaunchMangaConResult,
   MangaConBadgeScanResult,
   MangaConWindow,
+  OpenComicResult,
   OpenFavoritesResult,
 } from "./types";
 
@@ -42,6 +44,14 @@ export function launchMangaCon(
   });
 }
 
+export function restartMangaCon(
+  options: LaunchMangaConOptions,
+): Promise<LaunchMangaConResult> {
+  return invoke<LaunchMangaConResult>("restart_mangacon", {
+    executablePath: options.executablePath,
+  });
+}
+
 export function getAutomationStatus(): Promise<AutomationRunStatus> {
   return invoke<AutomationRunStatus>("get_automation_status");
 }
@@ -52,4 +62,12 @@ export function scanMangaConBadges(): Promise<MangaConBadgeScanResult> {
 
 export function openMangaConFavorites(): Promise<OpenFavoritesResult> {
   return invoke<OpenFavoritesResult>("open_mangacon_favorites");
+}
+
+export function openFirstUpdatedComic(): Promise<OpenComicResult> {
+  return invoke<OpenComicResult>("open_first_updated_comic");
+}
+
+export function scanDetailUpdates(): Promise<DetailUpdateScanResult> {
+  return invoke<DetailUpdateScanResult>("scan_detail_updates");
 }

@@ -38,6 +38,7 @@ describe("AutomationView", () => {
         { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
       ],
       launch: async () => ({ pid: 2345 }),
+      restart: async () => ({ pid: 7890 }),
       getStatus: async () => ({
         state: "waiting_refresh" as const,
         message: "等待漫画控刷新收藏更新...",
@@ -59,6 +60,21 @@ describe("AutomationView", () => {
         width: 850,
         height: 600,
         badges: [{ x: 174, y: 95 }],
+      }),
+      openFirstUpdatedComic: async () => ({
+        window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+        badge: { x: 174, y: 95 },
+        clicked: { x: 117, y: 171 },
+        width: 850,
+        height: 600,
+        remainingBadges: [],
+      }),
+      scanDetailUpdates: async () => ({
+        window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+        width: 850,
+        height: 600,
+        badges: [{ x: 142, y: 516 }],
+        scrollAttempts: 3,
       }),
     };
 
@@ -84,6 +100,11 @@ describe("AutomationView", () => {
 
     expect(await screen.findByText("已启动 PID 2345")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "重启漫画控" }));
+
+    expect(await screen.findByText("已启动 PID 7890")).toBeInTheDocument();
+    expect(screen.getByText("漫画控已重启，等待刷新红点")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "刷新状态" }));
 
     expect(await screen.findByText("红点 5")).toBeInTheDocument();
@@ -98,5 +119,15 @@ describe("AutomationView", () => {
 
     expect(await screen.findByText("点击 212,330")).toBeInTheDocument();
     expect(screen.getByText("识别红点 1")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打开首个更新" }));
+
+    expect(await screen.findByText("更新红点 174,95")).toBeInTheDocument();
+    expect(screen.getByText("打开详情 117,171")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "扫描详情更新" }));
+
+    expect(await screen.findByText("详情红点 1")).toBeInTheDocument();
+    expect(screen.getByText("滚动扫描 3 次")).toBeInTheDocument();
   });
 });

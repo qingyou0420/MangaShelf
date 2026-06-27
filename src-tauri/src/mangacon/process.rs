@@ -52,6 +52,25 @@ pub fn launch_mangacon(path: impl AsRef<Path>) -> Result<LaunchResult, MangaConP
     Ok(LaunchResult { pid: child.id() })
 }
 
+pub fn restart_mangacon(path: impl AsRef<Path>) -> Result<LaunchResult, MangaConProcessError> {
+    let exe_path = validate_exe(path)?;
+    terminate_running_mangacon();
+    let child = Command::new(exe_path).spawn()?;
+
+    Ok(LaunchResult { pid: child.id() })
+}
+
+#[cfg(windows)]
+fn terminate_running_mangacon() {
+    let _ = Command::new("taskkill")
+        .args(["/IM", "MangaCon.exe", "/F", "/T"])
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+}
+
+#[cfg(not(windows))]
+fn terminate_running_mangacon() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,5 +83,24 @@ mod tests {
         let error = validate_exe(&path).expect_err("missing exe should fail");
 
         assert!(error.to_string().contains("MangaCon.exe 不存在"), "{error}");
+    }
+
+    #[test]
+    fn restart_reports_missing_mangacon_exe_before_killing_processes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("MangaCon.exe");
+
+        let error = restart_mangacon(&path).expect_err("missing exe should fail");
+
+        assert!(error.to_string().contains("MangaCon.exe 不存在"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "restarts the local MangaCon.exe process"]
+    fn manual_restarts_local_mangacon() {
+        let result = restart_mangacon(r"E:\漫画控\MangaCon.exe").expect("restart MangaCon");
+
+        assert!(result.pid > 0, "unexpected pid: {}", result.pid);
+        println!("restarted MangaCon pid {}", result.pid);
     }
 }

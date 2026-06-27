@@ -12,6 +12,14 @@ const FAVORITES_BADGE_FIRST_Y: i32 = 96;
 const FAVORITES_BADGE_COLUMN_STEP: i32 = 200;
 const FAVORITES_BADGE_ROW_STEP: i32 = 200;
 const FAVORITES_BADGE_GRID_TOLERANCE: i32 = 24;
+const DETAIL_REFERENCE_WIDTH: usize = 850;
+const DETAIL_REFERENCE_HEIGHT: usize = 600;
+const DETAIL_CHAPTER_BADGE_FIRST_X: i32 = 20;
+const DETAIL_CHAPTER_BADGE_FIRST_Y: i32 = 82;
+const DETAIL_CHAPTER_BADGE_COLUMN_STEP: i32 = 122;
+const DETAIL_CHAPTER_BADGE_ROW_STEP: i32 = 31;
+const DETAIL_CHAPTER_BADGE_X_TOLERANCE: i32 = 18;
+const DETAIL_CHAPTER_BADGE_Y_TOLERANCE: i32 = 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,6 +139,21 @@ pub fn detect_favorites_update_badges_from_rgba(
         .badges
         .into_iter()
         .filter(|badge| is_favorites_grid_badge(*badge, width, height))
+        .collect::<Vec<_>>();
+    badges.sort();
+    badges.dedup();
+    BadgeSample { badges }
+}
+
+pub fn detect_detail_chapter_update_badges_from_rgba(
+    width: usize,
+    height: usize,
+    rgba: &[u8],
+) -> BadgeSample {
+    let mut badges = detect_badge_points_from_rgba(width, height, rgba)
+        .badges
+        .into_iter()
+        .filter(|badge| is_detail_chapter_badge(*badge, width, height))
         .collect::<Vec<_>>();
     badges.sort();
     badges.dedup();
@@ -282,6 +305,43 @@ fn is_favorites_grid_badge(badge: BadgePoint, width: usize, height: usize) -> bo
     false
 }
 
+fn is_detail_chapter_badge(badge: BadgePoint, width: usize, height: usize) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+
+    let tolerance_x = scale_reference_axis(
+        DETAIL_CHAPTER_BADGE_X_TOLERANCE,
+        width,
+        DETAIL_REFERENCE_WIDTH,
+    )
+    .max(10);
+    let tolerance_y = scale_reference_axis(
+        DETAIL_CHAPTER_BADGE_Y_TOLERANCE,
+        height,
+        DETAIL_REFERENCE_HEIGHT,
+    )
+    .max(8);
+
+    let mut expected_y = DETAIL_CHAPTER_BADGE_FIRST_Y;
+    while expected_y < DETAIL_REFERENCE_HEIGHT as i32 {
+        let scaled_y = scale_reference_axis(expected_y, height, DETAIL_REFERENCE_HEIGHT);
+        if (badge.y - scaled_y).abs() <= tolerance_y {
+            let mut expected_x = DETAIL_CHAPTER_BADGE_FIRST_X;
+            while expected_x < DETAIL_REFERENCE_WIDTH as i32 {
+                let scaled_x = scale_reference_axis(expected_x, width, DETAIL_REFERENCE_WIDTH);
+                if (badge.x - scaled_x).abs() <= tolerance_x {
+                    return true;
+                }
+                expected_x += DETAIL_CHAPTER_BADGE_COLUMN_STEP;
+            }
+        }
+        expected_y += DETAIL_CHAPTER_BADGE_ROW_STEP;
+    }
+
+    false
+}
+
 fn scale_reference_axis(value: i32, actual: usize, reference: usize) -> i32 {
     ((i64::from(value) * actual as i64) / reference as i64) as i32
 }
@@ -359,6 +419,22 @@ mod tests {
         let sample = detect_favorites_update_badges_from_rgba(width, height, &rgba);
 
         assert_eq!(sample, BadgeSample::from_points([(174, 96), (374, 296)]));
+    }
+
+    #[test]
+    fn filters_detail_chapter_update_badges_to_chapter_button_grid() {
+        let width = 850;
+        let height = 600;
+        let mut rgba = vec![255_u8; width * height * 4];
+
+        draw_red_badge(&mut rgba, width, 142, 516, 5);
+        draw_red_badge(&mut rgba, width, 20, 82, 5);
+        draw_red_badge(&mut rgba, width, 174, 96, 8);
+        draw_red_badge(&mut rgba, width, 529, 326, 8);
+
+        let sample = detect_detail_chapter_update_badges_from_rgba(width, height, &rgba);
+
+        assert_eq!(sample, BadgeSample::from_points([(20, 82), (142, 516)]));
     }
 
     fn draw_red_badge(rgba: &mut [u8], width: usize, cx: usize, cy: usize, radius: usize) {

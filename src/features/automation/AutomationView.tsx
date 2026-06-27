@@ -3,6 +3,7 @@ import {
   Clock3,
   ListChecks,
   MonitorDot,
+  MousePointerClick,
   PanelTopOpen,
   PlayCircle,
   RefreshCw,
@@ -14,15 +15,20 @@ import {
   findMangaConWindows,
   getAutomationStatus,
   launchMangaCon,
+  openFirstUpdatedComic,
   openMangaConFavorites,
+  restartMangaCon,
+  scanDetailUpdates,
   scanMangaConBadges,
 } from "../../lib/api";
 import type {
   AutomationRunStatus,
   CompanionPaths,
+  DetailUpdateScanResult,
   LaunchMangaConResult,
   MangaConBadgeScanResult,
   MangaConWindow,
+  OpenComicResult,
   OpenFavoritesResult,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
@@ -50,17 +56,23 @@ interface AutomationViewProps {
 export interface AutomationService {
   findWindows: () => Promise<MangaConWindow[]>;
   launch: (executablePath: string) => Promise<LaunchMangaConResult>;
+  restart: (executablePath: string) => Promise<LaunchMangaConResult>;
   getStatus: () => Promise<AutomationRunStatus>;
   scanBadges: () => Promise<MangaConBadgeScanResult>;
   openFavorites: () => Promise<OpenFavoritesResult>;
+  openFirstUpdatedComic: () => Promise<OpenComicResult>;
+  scanDetailUpdates: () => Promise<DetailUpdateScanResult>;
 }
 
 const defaultAutomationService: AutomationService = {
   findWindows: findMangaConWindows,
   launch: (executablePath) => launchMangaCon({ executablePath }),
+  restart: (executablePath) => restartMangaCon({ executablePath }),
   getStatus: getAutomationStatus,
   scanBadges: scanMangaConBadges,
   openFavorites: openMangaConFavorites,
+  openFirstUpdatedComic,
+  scanDetailUpdates,
 };
 
 export function AutomationView({
@@ -73,6 +85,8 @@ export function AutomationView({
   const [launchResult, setLaunchResult] = useState<LaunchMangaConResult>();
   const [badgeScan, setBadgeScan] = useState<MangaConBadgeScanResult>();
   const [openResult, setOpenResult] = useState<OpenFavoritesResult>();
+  const [openComicResult, setOpenComicResult] = useState<OpenComicResult>();
+  const [detailUpdateScan, setDetailUpdateScan] = useState<DetailUpdateScanResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -110,6 +124,19 @@ export function AutomationView({
     });
   }
 
+  function handleRestart() {
+    void runAction("restart", async () => {
+      const result = await service.restart(paths.mangaConExecutable);
+      setLaunchResult(result);
+      setBadgeScan(undefined);
+      setOpenResult(undefined);
+      setOpenComicResult(undefined);
+      setDetailUpdateScan(undefined);
+      setMessage("漫画控已重启，等待刷新红点");
+      setWindows(await service.findWindows());
+    });
+  }
+
   function handleRefreshStatus() {
     void runAction("status", async () => {
       setCurrentStatus(await service.getStatus());
@@ -133,6 +160,24 @@ export function AutomationView({
       setBadgeScan(result);
       setWindows([result.window]);
       setMessage("收藏夹已打开");
+    });
+  }
+
+  function handleOpenFirstUpdatedComic() {
+    void runAction("open-first-updated", async () => {
+      const result = await service.openFirstUpdatedComic();
+      setOpenComicResult(result);
+      setWindows([result.window]);
+      setMessage("首个更新漫画已打开");
+    });
+  }
+
+  function handleScanDetailUpdates() {
+    void runAction("detail-updates", async () => {
+      const result = await service.scanDetailUpdates();
+      setDetailUpdateScan(result);
+      setWindows([result.window]);
+      setMessage("详情页章节更新扫描完成");
     });
   }
 
@@ -212,6 +257,15 @@ export function AutomationView({
           <button
             className="secondary-action"
             type="button"
+            onClick={handleRestart}
+            disabled={busyAction === "restart"}
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            重启漫画控
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
             onClick={handleRefreshStatus}
             disabled={busyAction === "status"}
           >
@@ -235,6 +289,24 @@ export function AutomationView({
           >
             <PanelTopOpen size={16} aria-hidden="true" />
             打开收藏夹
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleOpenFirstUpdatedComic}
+            disabled={busyAction === "open-first-updated"}
+          >
+            <MousePointerClick size={16} aria-hidden="true" />
+            打开首个更新
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleScanDetailUpdates}
+            disabled={busyAction === "detail-updates"}
+          >
+            <ScanSearch size={16} aria-hidden="true" />
+            扫描详情更新
           </button>
         </div>
         <dl className="link-state">
@@ -269,6 +341,30 @@ export function AutomationView({
               <dt>最近点击</dt>
               <dd>点击 {openResult.clicked.x},{openResult.clicked.y}</dd>
             </div>
+          )}
+          {openComicResult && (
+            <>
+              <div>
+                <dt>更新红点</dt>
+                <dd>更新红点 {openComicResult.badge.x},{openComicResult.badge.y}</dd>
+              </div>
+              <div>
+                <dt>打开详情</dt>
+                <dd>打开详情 {openComicResult.clicked.x},{openComicResult.clicked.y}</dd>
+              </div>
+            </>
+          )}
+          {detailUpdateScan && (
+            <>
+              <div>
+                <dt>详情红点</dt>
+                <dd>详情红点 {detailUpdateScan.badges.length}</dd>
+              </div>
+              <div>
+                <dt>滚动扫描</dt>
+                <dd>滚动扫描 {detailUpdateScan.scrollAttempts} 次</dd>
+              </div>
+            </>
           )}
           {error && (
             <div>

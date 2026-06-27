@@ -4,7 +4,10 @@ import {
   getAutomationStatus,
   importFavorites,
   launchMangaCon,
+  openFirstUpdatedComic,
   openMangaConFavorites,
+  restartMangaCon,
+  scanDetailUpdates,
   scanMangaConBadges,
 } from "./api";
 
@@ -119,6 +122,57 @@ describe("importFavorites", () => {
     expect(result).toMatchObject({
       clicked: { x: 212, y: 330 },
       badges: [{ x: 174, y: 95 }],
+    });
+  });
+
+  it("封装打开首个更新漫画详情 command", async () => {
+    invokeMock.mockResolvedValue({
+      window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+      badge: { x: 174, y: 95 },
+      clicked: { x: 117, y: 171 },
+      width: 850,
+      height: 600,
+      remainingBadges: [],
+    });
+
+    const result = await openFirstUpdatedComic();
+
+    expect(invokeMock).toHaveBeenCalledWith("open_first_updated_comic");
+    expect(result).toMatchObject({
+      badge: { x: 174, y: 95 },
+      clicked: { x: 117, y: 171 },
+      remainingBadges: [],
+    });
+  });
+
+  it("封装重启漫画控 command", async () => {
+    invokeMock.mockResolvedValue({ pid: 789 });
+
+    const result = await restartMangaCon({
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("restart_mangacon", {
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+    expect(result).toEqual({ pid: 789 });
+  });
+
+  it("封装扫描详情页章节更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+      width: 850,
+      height: 600,
+      badges: [{ x: 142, y: 516 }],
+      scrollAttempts: 3,
+    });
+
+    const result = await scanDetailUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("scan_detail_updates");
+    expect(result).toMatchObject({
+      badges: [{ x: 142, y: 516 }],
+      scrollAttempts: 3,
     });
   });
 });
