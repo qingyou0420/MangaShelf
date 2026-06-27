@@ -59,15 +59,14 @@ fn import_favorites_inner(
         db.upsert_comic(comic)?;
     }
 
-    let records = db.list_comics()?;
-    let matched = records
+    let matched = comics
         .iter()
         .filter(|record| record.local_path.is_some())
         .count();
     Ok(ImportSummary {
         imported: comics.len(),
         matched,
-        favorites: records,
+        favorites: comics,
     })
 }
 
@@ -106,5 +105,41 @@ mod tests {
         assert_eq!(summary.imported, 1);
         assert_eq!(summary.favorites[0].source_uri, "cp:ruoshijiechuyuheiye");
         assert_eq!(summary.favorites[0].source_scheme.as_deref(), Some("cp"));
+    }
+
+    #[test]
+    fn import_favorites_summary_contains_only_current_import_batch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let old_path = temp.path().join("old.json");
+        let new_path = temp.path().join("new.json");
+        let db_path = temp.path().join("state.sqlite");
+        fs::write(
+            &old_path,
+            r#"{"favorites":[{"location":"旧记录","name":"旧记录","tags":["old"],"uri":"cp:old"}]}"#,
+        )
+        .expect("old fixture");
+        fs::write(
+            &new_path,
+            r#"{"favorites":[{"location":"新记录","name":"新记录","tags":["new"],"uri":"cp:new"}]}"#,
+        )
+        .expect("new fixture");
+
+        import_favorites_inner(
+            Some(old_path.display().to_string()),
+            Some(temp.path().display().to_string()),
+            db_path.display().to_string(),
+        )
+        .expect("old import");
+        let summary = import_favorites_inner(
+            Some(new_path.display().to_string()),
+            Some(temp.path().display().to_string()),
+            db_path.display().to_string(),
+        )
+        .expect("new import");
+
+        assert_eq!(summary.imported, 1);
+        assert_eq!(summary.matched, 0);
+        assert_eq!(summary.favorites.len(), 1);
+        assert_eq!(summary.favorites[0].source_uri, "cp:new");
     }
 }

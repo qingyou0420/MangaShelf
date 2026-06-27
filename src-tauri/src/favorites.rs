@@ -112,6 +112,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "depends on local MangaCon export at E:\\漫画控\\20260528184624.mc3db.json"]
     fn imports_real_mangacon_file_when_available() {
         let path = std::path::Path::new("E:\\漫画控\\20260528184624.mc3db.json");
         if !path.exists() {

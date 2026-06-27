@@ -193,19 +193,10 @@ fn chapter_kind_rank(kind: ChapterKind) -> u8 {
 }
 
 fn chapter_ordinal(title: &str) -> Option<f32> {
-    let mut started = false;
     let digits: String = title
         .chars()
-        .filter_map(|ch| {
-            if ch.is_ascii_digit() {
-                started = true;
-                Some(ch)
-            } else if started {
-                None
-            } else {
-                None
-            }
-        })
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(|ch| ch.is_ascii_digit())
         .collect();
 
     if digits.is_empty() {

@@ -22,7 +22,7 @@ impl ScanStatus {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_db_value(value: &str) -> Self {
         match value {
             "missing" => Self::Missing,
             "matched" => Self::Matched,
@@ -52,7 +52,7 @@ impl ChapterKind {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_db_value(value: &str) -> Self {
         match value {
             "regular" => Self::Regular,
             "volume" => Self::Volume,

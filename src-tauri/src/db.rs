@@ -11,9 +11,9 @@ pub struct CompanionDatabase {
 
 impl CompanionDatabase {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Ok(Self {
-            connection: Connection::open(path)?,
-        })
+        let connection = Connection::open(path)?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
+        Ok(Self { connection })
     }
 
     pub fn migrate(&self) -> Result<()> {
@@ -37,7 +37,7 @@ impl CompanionDatabase {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 location TEXT NOT NULL,
-                source_uri TEXT NOT NULL UNIQUE,
+                source_uri TEXT NOT NULL,
                 source_scheme TEXT,
                 source_domain TEXT,
                 local_path TEXT,
@@ -88,7 +88,7 @@ impl CompanionDatabase {
     ) -> Result<()> {
         let tags_json = serde_json::to_string(&favorite.tags)?;
         let local_title = local_match.map(|local| local.title.as_str());
-        let local_directory = local_match.map(|local| local.directory.display().to_string());
+        let local_directory = local_match.map(|local| path_to_string_lossy(&local.directory));
         let local_chapter_count = local_match.map(|local| local.chapter_count as i64);
         let local_image_count = local_match.map(|local| local.image_count as i64);
 
@@ -197,7 +197,7 @@ impl CompanionDatabase {
         let local_path = comic
             .local_path
             .as_ref()
-            .map(|path| path.display().to_string());
+            .map(|path| path_to_string_lossy(path.as_path()));
         self.connection.execute(
             r#"
             INSERT INTO comics (
@@ -274,7 +274,7 @@ impl CompanionDatabase {
                 chapter_count: row.get::<_, i64>(7)? as usize,
                 image_count: row.get::<_, i64>(8)? as usize,
                 read_progress_page: row.get::<_, i64>(9)? as u32,
-                scan_status: ScanStatus::from_str(&row.get::<_, String>(10)?),
+                scan_status: ScanStatus::from_db_value(&row.get::<_, String>(10)?),
             })
         })?;
 
@@ -283,7 +283,7 @@ impl CompanionDatabase {
     }
 
     pub fn upsert_chapter(&self, chapter: &Chapter) -> Result<()> {
-        let path = chapter.path.display().to_string();
+        let path = path_to_string_lossy(&chapter.path);
         self.connection.execute(
             r#"
             INSERT INTO chapters (
@@ -333,7 +333,7 @@ impl CompanionDatabase {
                 ordinal: row.get::<_, Option<f64>>(4)?.map(|value| value as f32),
                 page_count: row.get::<_, i64>(5)? as usize,
                 read_progress_page: row.get::<_, i64>(6)? as u32,
-                special_kind: ChapterKind::from_str(&row.get::<_, String>(7)?),
+                special_kind: ChapterKind::from_db_value(&row.get::<_, String>(7)?),
             })
         })?;
 
@@ -348,6 +348,32 @@ impl CompanionDatabase {
         let rows = statement.query_map(params![comic_id], |row| row.get(0))?;
         rows.collect()
     }
+
+    #[cfg(test)]
+    fn count_rows(&self, table: &str) -> Result<i64> {
+        let sql = match table {
+            "comics" => "SELECT COUNT(*) FROM comics",
+            "comic_tags" => "SELECT COUNT(*) FROM comic_tags",
+            "chapters" => "SELECT COUNT(*) FROM chapters",
+            "automation_runs" => "SELECT COUNT(*) FROM automation_runs",
+            "favorites" => "SELECT COUNT(*) FROM favorites",
+            _ => anyhow::bail!("unsupported table for test count: {table}"),
+        };
+        Ok(self.connection.query_row(sql, [], |row| row.get(0))?)
+    }
+
+    #[cfg(test)]
+    fn delete_comic(&self, comic_id: &str) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM comics WHERE id = ?1", params![comic_id])?;
+        Ok(())
+    }
+}
+
+fn path_to_string_lossy(path: &Path) -> String {
+    // Windows MangaCon/book shelf paths may contain Unicode. SQLite stores UTF-8 text,
+    // so use lossy conversion at this boundary instead of scattering display() calls.
+    path.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
@@ -430,5 +456,76 @@ mod tests {
             .expect("list chapters");
         assert_eq!(chapters.len(), 1);
         assert_eq!(chapters[0].special_kind, ChapterKind::Regular);
+    }
+
+    #[test]
+    fn comic_upsert_is_idempotent_and_source_uri_is_not_a_global_unique_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db = CompanionDatabase::open(temp.path().join("state.sqlite")).expect("db open");
+        db.migrate().expect("migrate");
+
+        let comic = Comic::from_mangacon_favorite(
+            "若世界處於黑夜",
+            "若世界處於黑夜",
+            "cp:ruoshijiechuyuheiye",
+            None,
+            vec!["むちまろ".to_string(), "むちまろ".to_string()],
+        );
+        let chapter = Chapter {
+            id: "cp:ruoshijiechuyuheiye::第01话".to_string(),
+            comic_id: comic.id.clone(),
+            title: "第01话".to_string(),
+            path: "E:\\书架\\若世界處於黑夜\\第01话".into(),
+            ordinal: Some(1.0),
+            page_count: 12,
+            read_progress_page: 0,
+            special_kind: ChapterKind::Regular,
+        };
+
+        db.upsert_comic(&comic).expect("first comic upsert");
+        db.upsert_comic(&comic).expect("second comic upsert");
+        db.upsert_chapter(&chapter).expect("first chapter upsert");
+        db.upsert_chapter(&chapter).expect("second chapter upsert");
+
+        assert_eq!(db.count_rows("comic_tags").expect("tag count"), 1);
+        assert_eq!(db.count_rows("chapters").expect("chapter count"), 1);
+
+        let mut mirror = comic.clone();
+        mirror.id = "manual:copy-of-ruoshijie".to_string();
+        db.upsert_comic(&mirror)
+            .expect("same source_uri under different id should not conflict");
+        assert_eq!(db.count_rows("comics").expect("comic count"), 2);
+    }
+
+    #[test]
+    fn foreign_keys_cascade_tags_and_chapters_when_comic_is_deleted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db = CompanionDatabase::open(temp.path().join("state.sqlite")).expect("db open");
+        db.migrate().expect("migrate");
+
+        let comic = Comic::from_mangacon_favorite(
+            "若世界處於黑夜",
+            "若世界處於黑夜",
+            "cp:ruoshijiechuyuheiye",
+            None,
+            vec!["むちまろ".to_string()],
+        );
+        let chapter = Chapter {
+            id: "cp:ruoshijiechuyuheiye::第01话".to_string(),
+            comic_id: comic.id.clone(),
+            title: "第01话".to_string(),
+            path: "E:\\书架\\若世界處於黑夜\\第01话".into(),
+            ordinal: Some(1.0),
+            page_count: 12,
+            read_progress_page: 0,
+            special_kind: ChapterKind::Regular,
+        };
+
+        db.upsert_comic(&comic).expect("upsert comic");
+        db.upsert_chapter(&chapter).expect("upsert chapter");
+        db.delete_comic(&comic.id).expect("delete comic");
+
+        assert_eq!(db.count_rows("comic_tags").expect("tag count"), 0);
+        assert_eq!(db.count_rows("chapters").expect("chapter count"), 0);
     }
 }
