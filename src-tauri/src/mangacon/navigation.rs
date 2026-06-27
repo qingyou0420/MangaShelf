@@ -11,6 +11,8 @@ const REFERENCE_WINDOW_WIDTH: u32 = 850;
 const REFERENCE_WINDOW_HEIGHT: u32 = 600;
 const HOME_FAVORITES_BUTTON_X: i32 = 212;
 const HOME_FAVORITES_BUTTON_Y: i32 = 330;
+const BACK_BUTTON_X: i32 = 28;
+const BACK_BUTTON_Y: i32 = 54;
 const TITLE_BAR_HEIGHT: i32 = 31;
 const BADGE_TO_CARD_CENTER_X_OFFSET: i32 = -57;
 const BADGE_TO_CARD_CENTER_Y_OFFSET: i32 = 76;
@@ -20,6 +22,8 @@ const DETAIL_SCAN_SCROLL_NOTCHES: i32 = 6;
 const FAVORITES_SCAN_MAX_SCROLLS: u32 = 48;
 const FAVORITES_SCAN_SCROLL_NOTCHES: i32 = 6;
 const FAVORITES_SCAN_RESET_NOTCHES: i32 = 360;
+const FAVORITE_UPDATE_BATCH_DEFAULT_LIMIT: u32 = 3;
+const FAVORITE_UPDATE_BATCH_MAX_LIMIT: u32 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,6 +112,23 @@ pub struct TriggerNextFavoriteUpdateDownloadResult {
     pub download: TriggerDetailDownloadResult,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FavoriteUpdateBatchStoppedReason {
+    LimitReached,
+    NoUpdateBadge,
+    DetailNoUpdateBadge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerFavoriteUpdateBatchResult {
+    pub requested_limit: u32,
+    pub processed: u32,
+    pub stopped_reason: FavoriteUpdateBatchStoppedReason,
+    pub items: Vec<TriggerNextFavoriteUpdateDownloadResult>,
+}
+
 #[derive(Debug, Error)]
 pub enum NavigationError {
     #[error(transparent)]
@@ -125,10 +146,34 @@ pub fn favorites_button_point(width: u32, height: u32) -> WindowPoint {
     }
 }
 
+pub fn back_button_point(width: u32, height: u32) -> WindowPoint {
+    WindowPoint {
+        x: scale_axis(BACK_BUTTON_X, width, REFERENCE_WINDOW_WIDTH),
+        y: scale_axis(BACK_BUTTON_Y, height, REFERENCE_WINDOW_HEIGHT),
+    }
+}
+
 pub fn open_favorites_from_home() -> Result<OpenFavoritesResult, NavigationError> {
     let before_scan = scan_mangacon_badges()?;
     let clicked = favorites_button_point(before_scan.width, before_scan.height);
     click_window_point(before_scan.window.hwnd, clicked)?;
+
+    std::thread::sleep(std::time::Duration::from_millis(900));
+
+    let after_scan = scan_mangacon_badges()?;
+    Ok(OpenFavoritesResult {
+        window: after_scan.window,
+        clicked,
+        width: after_scan.width,
+        height: after_scan.height,
+        badges: after_scan.badges,
+    })
+}
+
+pub fn return_to_favorites_from_detail() -> Result<OpenFavoritesResult, NavigationError> {
+    let before_scan = scan_mangacon_badges()?;
+    let clicked = back_button_point(before_scan.width, before_scan.height);
+    foreground_click_window_point_once(before_scan.window.hwnd, clicked)?;
 
     std::thread::sleep(std::time::Duration::from_millis(900));
 
@@ -342,6 +387,45 @@ pub fn trigger_next_favorite_update_download(
     Ok(TriggerNextFavoriteUpdateDownloadResult { comic, download })
 }
 
+pub fn trigger_favorite_update_batch(
+    max_updates: Option<u32>,
+) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
+    let requested_limit = favorite_update_batch_limit(max_updates);
+    let mut items = Vec::new();
+    let mut stopped_reason = FavoriteUpdateBatchStoppedReason::LimitReached;
+
+    for _ in 0..requested_limit {
+        let comic = match open_next_badged_comic_from_favorites() {
+            Ok(comic) => comic,
+            Err(NavigationError::NoUpdateBadge) => {
+                stopped_reason = FavoriteUpdateBatchStoppedReason::NoUpdateBadge;
+                break;
+            }
+            Err(error) => return Err(error),
+        };
+
+        let download = match trigger_first_detail_update_download() {
+            Ok(download) => download,
+            Err(NavigationError::NoUpdateBadge) => {
+                stopped_reason = FavoriteUpdateBatchStoppedReason::DetailNoUpdateBadge;
+                return_to_favorites_from_detail()?;
+                break;
+            }
+            Err(error) => return Err(error),
+        };
+
+        items.push(TriggerNextFavoriteUpdateDownloadResult { comic, download });
+        return_to_favorites_from_detail()?;
+    }
+
+    Ok(TriggerFavoriteUpdateBatchResult {
+        requested_limit,
+        processed: items.len() as u32,
+        stopped_reason,
+        items,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FavoritesScrollScanSummary {
     badges: Vec<BadgePoint>,
@@ -391,6 +475,12 @@ fn next_favorite_update_target(
         badge,
         scroll_attempts,
     })
+}
+
+fn favorite_update_batch_limit(max_updates: Option<u32>) -> u32 {
+    max_updates
+        .unwrap_or(FAVORITE_UPDATE_BATCH_DEFAULT_LIMIT)
+        .clamp(1, FAVORITE_UPDATE_BATCH_MAX_LIMIT)
 }
 
 fn favorites_scroll_scan_summary_from_samples(
@@ -687,6 +777,20 @@ mod tests {
     }
 
     #[test]
+    fn back_button_point_uses_window_reference() {
+        assert_eq!(back_button_point(850, 600), WindowPoint { x: 28, y: 54 });
+        assert_eq!(back_button_point(1700, 1200), WindowPoint { x: 56, y: 108 });
+    }
+
+    #[test]
+    fn favorite_update_batch_limit_is_safe_and_bounded() {
+        assert_eq!(favorite_update_batch_limit(None), 3);
+        assert_eq!(favorite_update_batch_limit(Some(0)), 1);
+        assert_eq!(favorite_update_batch_limit(Some(2)), 2);
+        assert_eq!(favorite_update_batch_limit(Some(99)), 10);
+    }
+
+    #[test]
     fn client_point_packs_into_lparam_low_x_high_y() {
         assert_eq!(
             pack_client_point(WindowPoint { x: 212, y: 299 }),
@@ -913,5 +1017,39 @@ mod tests {
             result.download.scroll_attempts,
             result.download.remaining_badges
         );
+    }
+
+    #[test]
+    #[ignore = "requires MangaCon.exe already on a comic detail page"]
+    fn manual_returns_to_favorites_from_detail() {
+        let result = return_to_favorites_from_detail().expect("return to favorites");
+
+        assert!(result.width > 300, "unexpected width: {}", result.width);
+        assert!(result.height > 200, "unexpected height: {}", result.height);
+        println!(
+            "clicked back {:?}, scanned {}x{}, favorites badges: {:?}",
+            result.clicked, result.width, result.height, result.badges
+        );
+    }
+
+    #[test]
+    #[ignore = "requires MangaCon.exe already on favorites page with update badges"]
+    fn manual_triggers_favorite_update_batch() {
+        let result = trigger_favorite_update_batch(Some(3)).expect("trigger favorite update batch");
+
+        assert!(result.requested_limit <= 3);
+        println!(
+            "batch processed {}/{}, stopped {:?}",
+            result.processed, result.requested_limit, result.stopped_reason
+        );
+        for (index, item) in result.items.iter().enumerate() {
+            println!(
+                "#{index}: comic {:?} -> detail {:?}, favorite scrolled {}, detail scrolled {}",
+                item.comic.clicked,
+                item.download.clicked,
+                item.comic.scroll_attempts,
+                item.download.scroll_attempts
+            );
+        }
     }
 }

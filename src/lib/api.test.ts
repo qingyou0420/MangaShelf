@@ -11,6 +11,7 @@ import {
   scanFavoritesUpdates,
   scanMangaConBadges,
   triggerFirstDetailUpdateDownload,
+  triggerFavoriteUpdateBatch,
   triggerNextFavoriteUpdateDownload,
 } from "./api";
 
@@ -268,6 +269,47 @@ describe("importFavorites", () => {
         clicked: { x: 203, y: 516 },
         scrollAttempts: 4,
       },
+    });
+  });
+
+  it("封装连续处理收藏更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      requestedLimit: 3,
+      processed: 2,
+      stoppedReason: "no_update_badge",
+      items: [
+        {
+          comic: {
+            window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 174, y: 96 },
+            clicked: { x: 117, y: 172 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 0,
+          },
+          download: {
+            window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 151, y: 516 },
+            clicked: { x: 203, y: 516 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 1,
+          },
+        },
+      ],
+    });
+
+    const result = await triggerFavoriteUpdateBatch({ maxUpdates: 3 });
+
+    expect(invokeMock).toHaveBeenCalledWith("trigger_favorite_update_batch", {
+      maxUpdates: 3,
+    });
+    expect(result).toMatchObject({
+      requestedLimit: 3,
+      processed: 2,
+      stoppedReason: "no_update_badge",
     });
   });
 });

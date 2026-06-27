@@ -20,10 +20,11 @@ use crate::{
             open_first_badged_comic_from_favorites as open_first_updated_comic_inner,
             scan_detail_updates_with_scroll as scan_detail_updates_inner,
             scan_favorites_updates_with_scroll as scan_favorites_updates_inner,
+            trigger_favorite_update_batch as trigger_favorite_update_batch_inner,
             trigger_first_detail_update_download as trigger_first_detail_update_download_inner,
             trigger_next_favorite_update_download as trigger_next_favorite_update_download_inner,
             DetailUpdateScanResult, FavoritesUpdateScanResult, OpenComicResult,
-            OpenFavoritesResult, TriggerDetailDownloadResult,
+            OpenFavoritesResult, TriggerDetailDownloadResult, TriggerFavoriteUpdateBatchResult,
             TriggerNextFavoriteUpdateDownloadResult,
         },
         process::{
@@ -107,6 +108,13 @@ fn trigger_next_favorite_update_download() -> Result<TriggerNextFavoriteUpdateDo
     trigger_next_favorite_update_download_inner().map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn trigger_favorite_update_batch(
+    max_updates: Option<u32>,
+) -> Result<TriggerFavoriteUpdateBatchResult, String> {
+    trigger_favorite_update_batch_inner(max_updates).map_err(|err| err.to_string())
+}
+
 fn import_favorites_inner(
     favorites_json_path: Option<String>,
     bookshelf_root: Option<String>,
@@ -165,7 +173,8 @@ pub fn run() {
             scan_favorites_updates,
             scan_detail_updates,
             trigger_first_detail_update_download,
-            trigger_next_favorite_update_download
+            trigger_next_favorite_update_download,
+            trigger_favorite_update_batch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

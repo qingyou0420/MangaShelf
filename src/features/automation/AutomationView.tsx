@@ -21,6 +21,7 @@ import {
   scanDetailUpdates,
   scanFavoritesUpdates,
   scanMangaConBadges,
+  triggerFavoriteUpdateBatch,
   triggerFirstDetailUpdateDownload,
   triggerNextFavoriteUpdateDownload,
 } from "../../lib/api";
@@ -35,6 +36,7 @@ import type {
   OpenComicResult,
   OpenFavoritesResult,
   TriggerDetailDownloadResult,
+  TriggerFavoriteUpdateBatchResult,
   TriggerNextFavoriteUpdateDownloadResult,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
@@ -71,6 +73,7 @@ export interface AutomationService {
   scanDetailUpdates: () => Promise<DetailUpdateScanResult>;
   triggerFirstDetailUpdateDownload: () => Promise<TriggerDetailDownloadResult>;
   triggerNextFavoriteUpdateDownload: () => Promise<TriggerNextFavoriteUpdateDownloadResult>;
+  triggerFavoriteUpdateBatch: (maxUpdates: number) => Promise<TriggerFavoriteUpdateBatchResult>;
 }
 
 const defaultAutomationService: AutomationService = {
@@ -85,6 +88,7 @@ const defaultAutomationService: AutomationService = {
   scanDetailUpdates,
   triggerFirstDetailUpdateDownload,
   triggerNextFavoriteUpdateDownload,
+  triggerFavoriteUpdateBatch: (maxUpdates) => triggerFavoriteUpdateBatch({ maxUpdates }),
 };
 
 export function AutomationView({
@@ -105,6 +109,8 @@ export function AutomationView({
     useState<TriggerDetailDownloadResult>();
   const [nextFavoriteUpdateResult, setNextFavoriteUpdateResult] =
     useState<TriggerNextFavoriteUpdateDownloadResult>();
+  const [favoriteUpdateBatchResult, setFavoriteUpdateBatchResult] =
+    useState<TriggerFavoriteUpdateBatchResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -153,6 +159,7 @@ export function AutomationView({
       setDetailUpdateScan(undefined);
       setTriggerDownloadResult(undefined);
       setNextFavoriteUpdateResult(undefined);
+      setFavoriteUpdateBatchResult(undefined);
       setMessage("漫画控已重启，等待刷新红点");
       setWindows(await service.findWindows());
     });
@@ -226,6 +233,18 @@ export function AutomationView({
       setNextFavoriteUpdateResult(result);
       setWindows([result.download.window]);
       setMessage("下一个收藏更新已交给漫画控");
+    });
+  }
+
+  function handleTriggerFavoriteUpdateBatch() {
+    void runAction("trigger-favorite-update-batch", async () => {
+      const result = await service.triggerFavoriteUpdateBatch(3);
+      setFavoriteUpdateBatchResult(result);
+      const lastItem = result.items.at(-1);
+      if (lastItem) {
+        setWindows([lastItem.download.window]);
+      }
+      setMessage("连续收藏更新处理完成");
     });
   }
 
@@ -383,6 +402,15 @@ export function AutomationView({
             <MousePointerClick size={16} aria-hidden="true" />
             处理下一个收藏更新
           </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleTriggerFavoriteUpdateBatch}
+            disabled={busyAction === "trigger-favorite-update-batch"}
+          >
+            <MousePointerClick size={16} aria-hidden="true" />
+            连续处理 3 个更新
+          </button>
         </div>
         <dl className="link-state">
           <div>
@@ -494,6 +522,21 @@ export function AutomationView({
                   更新下载点击 {nextFavoriteUpdateResult.download.clicked.x},
                   {nextFavoriteUpdateResult.download.clicked.y}
                 </dd>
+              </div>
+            </>
+          )}
+          {favoriteUpdateBatchResult && (
+            <>
+              <div>
+                <dt>批量处理</dt>
+                <dd>
+                  批量处理 {favoriteUpdateBatchResult.processed}/
+                  {favoriteUpdateBatchResult.requestedLimit}
+                </dd>
+              </div>
+              <div>
+                <dt>停止原因</dt>
+                <dd>停止原因 {favoriteUpdateBatchResult.stoppedReason}</dd>
               </div>
             </>
           )}

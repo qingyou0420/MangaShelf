@@ -112,6 +112,18 @@ export interface TriggerNextFavoriteUpdateDownloadResult {
   download: TriggerDetailDownloadResult;
 }
 
+export type FavoriteUpdateBatchStoppedReason =
+  | "limit_reached"
+  | "no_update_badge"
+  | "detail_no_update_badge";
+
+export interface TriggerFavoriteUpdateBatchResult {
+  requestedLimit: number;
+  processed: number;
+  stoppedReason: FavoriteUpdateBatchStoppedReason;
+  items: TriggerNextFavoriteUpdateDownloadResult[];
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }

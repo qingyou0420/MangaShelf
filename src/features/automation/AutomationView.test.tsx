@@ -126,6 +126,33 @@ describe("AutomationView", () => {
           scrollAttempts: 4,
         },
       }),
+      triggerFavoriteUpdateBatch: async () => ({
+        requestedLimit: 3,
+        processed: 2,
+        stoppedReason: "no_update_badge" as const,
+        items: [
+          {
+            comic: {
+              window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+              badge: { x: 174, y: 96 },
+              clicked: { x: 117, y: 172 },
+              width: 850,
+              height: 600,
+              remainingBadges: [],
+              scrollAttempts: 0,
+            },
+            download: {
+              window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+              badge: { x: 151, y: 516 },
+              clicked: { x: 203, y: 516 },
+              width: 850,
+              height: 600,
+              remainingBadges: [],
+              scrollAttempts: 1,
+            },
+          },
+        ],
+      }),
     };
 
     render(
@@ -196,5 +223,10 @@ describe("AutomationView", () => {
     expect(await screen.findByText("收藏点击 117,172")).toBeInTheDocument();
     expect(screen.getByText("收藏滚动定位 2 次")).toBeInTheDocument();
     expect(screen.getByText("更新下载点击 203,516")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "连续处理 3 个更新" }));
+
+    expect(await screen.findByText("批量处理 2/3")).toBeInTheDocument();
+    expect(screen.getByText("停止原因 no_update_badge")).toBeInTheDocument();
   });
 });

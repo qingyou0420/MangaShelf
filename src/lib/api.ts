@@ -10,6 +10,7 @@ import type {
   OpenComicResult,
   OpenFavoritesResult,
   TriggerDetailDownloadResult,
+  TriggerFavoriteUpdateBatchResult,
   TriggerNextFavoriteUpdateDownloadResult,
 } from "./types";
 
@@ -23,6 +24,10 @@ export type ImportSummary = ImportFavoritesResult;
 
 export interface LaunchMangaConOptions {
   executablePath: string;
+}
+
+export interface TriggerFavoriteUpdateBatchOptions {
+  maxUpdates?: number;
 }
 
 export function importFavorites(
@@ -86,5 +91,16 @@ export function triggerFirstDetailUpdateDownload(): Promise<TriggerDetailDownloa
 export function triggerNextFavoriteUpdateDownload(): Promise<TriggerNextFavoriteUpdateDownloadResult> {
   return invoke<TriggerNextFavoriteUpdateDownloadResult>(
     "trigger_next_favorite_update_download",
+  );
+}
+
+export function triggerFavoriteUpdateBatch(
+  options: TriggerFavoriteUpdateBatchOptions = {},
+): Promise<TriggerFavoriteUpdateBatchResult> {
+  return invoke<TriggerFavoriteUpdateBatchResult>(
+    "trigger_favorite_update_batch",
+    {
+      maxUpdates: options.maxUpdates,
+    },
   );
 }
