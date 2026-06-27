@@ -277,6 +277,20 @@ describe("importFavorites", () => {
       requestedLimit: 3,
       processed: 2,
       stoppedReason: "no_update_badge",
+      skipped: [
+        {
+          comic: {
+            window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 374, y: 296 },
+            clicked: { x: 317, y: 372 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 1,
+          },
+          reason: "detail_no_update_badge",
+        },
+      ],
       items: [
         {
           comic: {
@@ -310,6 +324,16 @@ describe("importFavorites", () => {
       requestedLimit: 3,
       processed: 2,
       stoppedReason: "no_update_badge",
+      skipped: [
+        {
+          comic: {
+            badge: { x: 374, y: 296 },
+            clicked: { x: 317, y: 372 },
+            scrollAttempts: 1,
+          },
+          reason: "detail_no_update_badge",
+        },
+      ],
     });
   });
 });

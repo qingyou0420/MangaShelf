@@ -535,6 +535,10 @@ export function AutomationView({
                 </dd>
               </div>
               <div>
+                <dt>跳过收藏</dt>
+                <dd>跳过收藏 {favoriteUpdateBatchResult.skipped.length}</dd>
+              </div>
+              <div>
                 <dt>停止原因</dt>
                 <dd>停止原因 {favoriteUpdateBatchResult.stoppedReason}</dd>
               </div>

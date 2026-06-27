@@ -114,6 +114,19 @@ pub struct TriggerNextFavoriteUpdateDownloadResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum FavoriteUpdateSkipReason {
+    DetailNoUpdateBadge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedFavoriteUpdateResult {
+    pub comic: OpenScrolledComicResult,
+    pub reason: FavoriteUpdateSkipReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FavoriteUpdateBatchStoppedReason {
     LimitReached,
     NoUpdateBadge,
@@ -126,6 +139,7 @@ pub struct TriggerFavoriteUpdateBatchResult {
     pub requested_limit: u32,
     pub processed: u32,
     pub stopped_reason: FavoriteUpdateBatchStoppedReason,
+    pub skipped: Vec<SkippedFavoriteUpdateResult>,
     pub items: Vec<TriggerNextFavoriteUpdateDownloadResult>,
 }
 
@@ -207,7 +221,13 @@ pub fn open_first_badged_comic_from_favorites() -> Result<OpenComicResult, Navig
 }
 
 pub fn open_next_badged_comic_from_favorites() -> Result<OpenScrolledComicResult, NavigationError> {
-    let scan = scan_next_favorite_update_with_scroll()?;
+    open_next_badged_comic_from_favorites_excluding(&[])
+}
+
+fn open_next_badged_comic_from_favorites_excluding(
+    attempted_targets: &[NextFavoriteUpdateTarget],
+) -> Result<OpenScrolledComicResult, NavigationError> {
+    let scan = scan_next_favorite_update_with_scroll_excluding(attempted_targets)?;
     let clicked = comic_card_point_from_badge(scan.badge);
     foreground_click_window_point(scan.window.hwnd, clicked)?;
 
@@ -274,12 +294,19 @@ pub fn scan_favorites_updates_with_scroll() -> Result<FavoritesUpdateScanResult,
 
 pub fn scan_next_favorite_update_with_scroll(
 ) -> Result<NextFavoriteUpdateScanResult, NavigationError> {
+    scan_next_favorite_update_with_scroll_excluding(&[])
+}
+
+fn scan_next_favorite_update_with_scroll_excluding(
+    attempted_targets: &[NextFavoriteUpdateTarget],
+) -> Result<NextFavoriteUpdateScanResult, NavigationError> {
     let mut scan = scan_mangacon_badges()?;
     scroll_window_up(scan.window.hwnd, FAVORITES_SCAN_RESET_NOTCHES)?;
     std::thread::sleep(std::time::Duration::from_millis(650));
 
     scan = scan_mangacon_badges()?;
-    if let Some(target) = next_favorite_update_target(0, &scan.badges) {
+    if let Some(target) = next_favorite_update_target_excluding(0, &scan.badges, attempted_targets)
+    {
         return Ok(NextFavoriteUpdateScanResult {
             window: scan.window,
             width: scan.width,
@@ -297,7 +324,9 @@ pub fn scan_next_favorite_update_with_scroll(
         std::thread::sleep(std::time::Duration::from_millis(420));
         scan = scan_mangacon_badges()?;
 
-        if let Some(target) = next_favorite_update_target(scroll_attempts, &scan.badges) {
+        if let Some(target) =
+            next_favorite_update_target_excluding(scroll_attempts, &scan.badges, attempted_targets)
+        {
             return Ok(NextFavoriteUpdateScanResult {
                 window: scan.window,
                 width: scan.width,
@@ -392,10 +421,12 @@ pub fn trigger_favorite_update_batch(
 ) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
     let requested_limit = favorite_update_batch_limit(max_updates);
     let mut items = Vec::new();
+    let mut skipped = Vec::new();
+    let mut attempted_targets = Vec::new();
     let mut stopped_reason = FavoriteUpdateBatchStoppedReason::LimitReached;
 
     for _ in 0..requested_limit {
-        let comic = match open_next_badged_comic_from_favorites() {
+        let comic = match open_next_badged_comic_from_favorites_excluding(&attempted_targets) {
             Ok(comic) => comic,
             Err(NavigationError::NoUpdateBadge) => {
                 stopped_reason = FavoriteUpdateBatchStoppedReason::NoUpdateBadge;
@@ -403,17 +434,26 @@ pub fn trigger_favorite_update_batch(
             }
             Err(error) => return Err(error),
         };
+        let attempted_target = NextFavoriteUpdateTarget {
+            badge: comic.badge,
+            scroll_attempts: comic.scroll_attempts,
+        };
 
         let download = match trigger_first_detail_update_download() {
             Ok(download) => download,
             Err(NavigationError::NoUpdateBadge) => {
-                stopped_reason = FavoriteUpdateBatchStoppedReason::DetailNoUpdateBadge;
+                attempted_targets.push(attempted_target);
+                skipped.push(SkippedFavoriteUpdateResult {
+                    comic,
+                    reason: FavoriteUpdateSkipReason::DetailNoUpdateBadge,
+                });
                 return_to_favorites_from_detail()?;
-                break;
+                continue;
             }
             Err(error) => return Err(error),
         };
 
+        attempted_targets.push(attempted_target);
         items.push(TriggerNextFavoriteUpdateDownloadResult { comic, download });
         return_to_favorites_from_detail()?;
     }
@@ -422,6 +462,7 @@ pub fn trigger_favorite_update_batch(
         requested_limit,
         processed: items.len() as u32,
         stopped_reason,
+        skipped,
         items,
     })
 }
@@ -467,14 +508,20 @@ impl FavoritesScrollScanSample {
     }
 }
 
-fn next_favorite_update_target(
+fn next_favorite_update_target_excluding(
     scroll_attempts: u32,
     badges: &[BadgePoint],
+    attempted_targets: &[NextFavoriteUpdateTarget],
 ) -> Option<NextFavoriteUpdateTarget> {
-    first_update_badge(badges).map(|badge| NextFavoriteUpdateTarget {
-        badge,
-        scroll_attempts,
-    })
+    badges
+        .iter()
+        .copied()
+        .map(|badge| NextFavoriteUpdateTarget {
+            badge,
+            scroll_attempts,
+        })
+        .filter(|target| !attempted_targets.contains(target))
+        .min_by_key(|target| (target.badge.y, target.badge.x))
 }
 
 fn favorite_update_batch_limit(max_updates: Option<u32>) -> u32 {
@@ -893,13 +940,14 @@ mod tests {
 
     #[test]
     fn next_favorite_update_target_keeps_scroll_attempt_and_top_left_badge() {
-        let target = next_favorite_update_target(
+        let target = next_favorite_update_target_excluding(
             7,
             &[
                 BadgePoint { x: 574, y: 296 },
                 BadgePoint { x: 174, y: 496 },
                 BadgePoint { x: 374, y: 96 },
             ],
+            &[],
         );
 
         assert_eq!(
@@ -907,6 +955,30 @@ mod tests {
             Some(NextFavoriteUpdateTarget {
                 badge: BadgePoint { x: 374, y: 96 },
                 scroll_attempts: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn next_favorite_update_target_skips_excluded_badges() {
+        let target = next_favorite_update_target_excluding(
+            4,
+            &[
+                BadgePoint { x: 174, y: 96 },
+                BadgePoint { x: 374, y: 96 },
+                BadgePoint { x: 174, y: 296 },
+            ],
+            &[NextFavoriteUpdateTarget {
+                badge: BadgePoint { x: 174, y: 96 },
+                scroll_attempts: 4,
+            }],
+        );
+
+        assert_eq!(
+            target,
+            Some(NextFavoriteUpdateTarget {
+                badge: BadgePoint { x: 374, y: 96 },
+                scroll_attempts: 4,
             })
         );
     }

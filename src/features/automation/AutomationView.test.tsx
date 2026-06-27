@@ -130,6 +130,20 @@ describe("AutomationView", () => {
         requestedLimit: 3,
         processed: 2,
         stoppedReason: "no_update_badge" as const,
+        skipped: [
+          {
+            comic: {
+              window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+              badge: { x: 374, y: 296 },
+              clicked: { x: 317, y: 372 },
+              width: 850,
+              height: 600,
+              remainingBadges: [],
+              scrollAttempts: 1,
+            },
+            reason: "detail_no_update_badge" as const,
+          },
+        ],
         items: [
           {
             comic: {
@@ -227,6 +241,7 @@ describe("AutomationView", () => {
     await user.click(screen.getByRole("button", { name: "连续处理 3 个更新" }));
 
     expect(await screen.findByText("批量处理 2/3")).toBeInTheDocument();
+    expect(screen.getByText("跳过收藏 1")).toBeInTheDocument();
     expect(screen.getByText("停止原因 no_update_badge")).toBeInTheDocument();
   });
 });
