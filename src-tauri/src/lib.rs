@@ -1,15 +1,22 @@
+pub mod automation;
 pub mod bookshelf;
 pub mod config;
 pub mod db;
 pub mod domain;
 pub mod favorites;
+pub mod mangacon;
 
 use crate::{
+    automation::AutomationRunStatus,
     bookshelf::{match_local_manga, scan_bookshelf},
     config::AppConfig,
     db::CompanionDatabase,
     domain::ImportSummary,
     favorites::import_mangacon_favorites,
+    mangacon::{
+        process::{launch_mangacon as launch_mangacon_process, LaunchResult},
+        window::MangaConWindow,
+    },
 };
 use std::path::PathBuf;
 
@@ -27,6 +34,21 @@ fn import_favorites(
 ) -> Result<ImportSummary, String> {
     import_favorites_inner(favorites_json_path, bookshelf_root, database_path)
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn find_mangacon_windows() -> Vec<MangaConWindow> {
+    mangacon::window::find_mangacon_windows()
+}
+
+#[tauri::command]
+fn launch_mangacon(executable_path: String) -> Result<LaunchResult, String> {
+    launch_mangacon_process(executable_path).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn get_automation_status() -> AutomationRunStatus {
+    AutomationRunStatus::waiting_refresh(0, 0)
 }
 
 fn import_favorites_inner(
@@ -74,7 +96,13 @@ fn import_favorites_inner(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, import_favorites])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            import_favorites,
+            find_mangacon_windows,
+            launch_mangacon,
+            get_automation_status
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

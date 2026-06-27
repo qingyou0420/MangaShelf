@@ -27,5 +27,4 @@ anyhow = "1.0.103"
 thiserror = "2.0.18"
 tempfile = "3.27.0"
 notify = "8.2.0"
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
-
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_UI_WindowsAndMessaging"] }

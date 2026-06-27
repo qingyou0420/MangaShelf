@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { importFavorites } from "./api";
+import {
+  findMangaConWindows,
+  getAutomationStatus,
+  importFavorites,
+  launchMangaCon,
+} from "./api";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -47,5 +52,35 @@ describe("importFavorites", () => {
     });
     expect(summary.imported).toBe(1);
     expect(summary.favorites[0].sourceUri).toBe("cp:ruoshijiechuyuheiye");
+  });
+
+  it("封装漫画控窗口、启动和自动化状态 commands", async () => {
+    invokeMock
+      .mockResolvedValueOnce([{ hwnd: 123, title: "漫画控 - 收藏" }])
+      .mockResolvedValueOnce({ pid: 456 })
+      .mockResolvedValueOnce({
+        state: "waiting_refresh",
+        message: "等待漫画控刷新收藏更新...",
+        detectedBadges: 2,
+        stableSamples: 3,
+      });
+
+    await expect(findMangaConWindows()).resolves.toEqual([
+      { hwnd: 123, title: "漫画控 - 收藏" },
+    ]);
+    await expect(
+      launchMangaCon({ executablePath: "E:\\漫画控\\MangaCon.exe" }),
+    ).resolves.toEqual({ pid: 456 });
+    await expect(getAutomationStatus()).resolves.toMatchObject({
+      state: "waiting_refresh",
+      detectedBadges: 2,
+      stableSamples: 3,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("find_mangacon_windows");
+    expect(invokeMock).toHaveBeenCalledWith("launch_mangacon", {
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("get_automation_status");
   });
 });

@@ -31,3 +31,19 @@ export interface ImportFavoritesResult {
   matched: number;
   favorites: MangaConFavorite[];
 }
+
+export interface MangaConWindow {
+  hwnd: number;
+  title: string;
+}
+
+export interface LaunchMangaConResult {
+  pid: number;
+}
+
+export interface AutomationRunStatus {
+  state: "waiting_refresh";
+  message: string;
+  detectedBadges: number;
+  stableSamples: number;
+}
