@@ -9,6 +9,7 @@ import {
   restartMangaCon,
   scanDetailUpdates,
   scanMangaConBadges,
+  triggerFirstDetailUpdateDownload,
 } from "./api";
 
 const { invokeMock } = vi.hoisted(() => ({
@@ -173,6 +174,27 @@ describe("importFavorites", () => {
     expect(result).toMatchObject({
       badges: [{ x: 142, y: 516 }],
       scrollAttempts: 3,
+    });
+  });
+
+  it("封装触发首个详情页章节更新下载 command", async () => {
+    invokeMock.mockResolvedValue({
+      window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+      badge: { x: 151, y: 516 },
+      clicked: { x: 203, y: 516 },
+      width: 850,
+      height: 600,
+      remainingBadges: [],
+      scrollAttempts: 0,
+    });
+
+    const result = await triggerFirstDetailUpdateDownload();
+
+    expect(invokeMock).toHaveBeenCalledWith("trigger_first_detail_update_download");
+    expect(result).toMatchObject({
+      badge: { x: 151, y: 516 },
+      clicked: { x: 203, y: 516 },
+      scrollAttempts: 0,
     });
   });
 });

@@ -76,6 +76,15 @@ describe("AutomationView", () => {
         badges: [{ x: 142, y: 516 }],
         scrollAttempts: 3,
       }),
+      triggerFirstDetailUpdateDownload: async () => ({
+        window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+        badge: { x: 151, y: 516 },
+        clicked: { x: 203, y: 516 },
+        width: 850,
+        height: 600,
+        remainingBadges: [],
+        scrollAttempts: 0,
+      }),
     };
 
     render(
@@ -129,5 +138,10 @@ describe("AutomationView", () => {
 
     expect(await screen.findByText("详情红点 1")).toBeInTheDocument();
     expect(screen.getByText("滚动扫描 3 次")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "下载首个章节更新" }));
+
+    expect(await screen.findByText("章节红点 151,516")).toBeInTheDocument();
+    expect(screen.getByText("章节点击 203,516")).toBeInTheDocument();
   });
 });

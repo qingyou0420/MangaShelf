@@ -20,6 +20,7 @@ import {
   restartMangaCon,
   scanDetailUpdates,
   scanMangaConBadges,
+  triggerFirstDetailUpdateDownload,
 } from "../../lib/api";
 import type {
   AutomationRunStatus,
@@ -30,6 +31,7 @@ import type {
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
+  TriggerDetailDownloadResult,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
 
@@ -62,6 +64,7 @@ export interface AutomationService {
   openFavorites: () => Promise<OpenFavoritesResult>;
   openFirstUpdatedComic: () => Promise<OpenComicResult>;
   scanDetailUpdates: () => Promise<DetailUpdateScanResult>;
+  triggerFirstDetailUpdateDownload: () => Promise<TriggerDetailDownloadResult>;
 }
 
 const defaultAutomationService: AutomationService = {
@@ -73,6 +76,7 @@ const defaultAutomationService: AutomationService = {
   openFavorites: openMangaConFavorites,
   openFirstUpdatedComic,
   scanDetailUpdates,
+  triggerFirstDetailUpdateDownload,
 };
 
 export function AutomationView({
@@ -87,6 +91,8 @@ export function AutomationView({
   const [openResult, setOpenResult] = useState<OpenFavoritesResult>();
   const [openComicResult, setOpenComicResult] = useState<OpenComicResult>();
   const [detailUpdateScan, setDetailUpdateScan] = useState<DetailUpdateScanResult>();
+  const [triggerDownloadResult, setTriggerDownloadResult] =
+    useState<TriggerDetailDownloadResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -132,6 +138,7 @@ export function AutomationView({
       setOpenResult(undefined);
       setOpenComicResult(undefined);
       setDetailUpdateScan(undefined);
+      setTriggerDownloadResult(undefined);
       setMessage("漫画控已重启，等待刷新红点");
       setWindows(await service.findWindows());
     });
@@ -178,6 +185,15 @@ export function AutomationView({
       setDetailUpdateScan(result);
       setWindows([result.window]);
       setMessage("详情页章节更新扫描完成");
+    });
+  }
+
+  function handleTriggerFirstDetailUpdateDownload() {
+    void runAction("trigger-detail-download", async () => {
+      const result = await service.triggerFirstDetailUpdateDownload();
+      setTriggerDownloadResult(result);
+      setWindows([result.window]);
+      setMessage("首个章节更新已交给漫画控");
     });
   }
 
@@ -308,6 +324,15 @@ export function AutomationView({
             <ScanSearch size={16} aria-hidden="true" />
             扫描详情更新
           </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleTriggerFirstDetailUpdateDownload}
+            disabled={busyAction === "trigger-detail-download"}
+          >
+            <MousePointerClick size={16} aria-hidden="true" />
+            下载首个章节更新
+          </button>
         </div>
         <dl className="link-state">
           <div>
@@ -363,6 +388,22 @@ export function AutomationView({
               <div>
                 <dt>滚动扫描</dt>
                 <dd>滚动扫描 {detailUpdateScan.scrollAttempts} 次</dd>
+              </div>
+            </>
+          )}
+          {triggerDownloadResult && (
+            <>
+              <div>
+                <dt>章节红点</dt>
+                <dd>章节红点 {triggerDownloadResult.badge.x},{triggerDownloadResult.badge.y}</dd>
+              </div>
+              <div>
+                <dt>章节点击</dt>
+                <dd>章节点击 {triggerDownloadResult.clicked.x},{triggerDownloadResult.clicked.y}</dd>
+              </div>
+              <div>
+                <dt>剩余章节红点</dt>
+                <dd>剩余章节红点 {triggerDownloadResult.remainingBadges.length}</dd>
               </div>
             </>
           )}

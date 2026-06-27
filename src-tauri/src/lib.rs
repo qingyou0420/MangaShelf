@@ -18,8 +18,10 @@ use crate::{
         navigation::{
             open_favorites_from_home as open_mangacon_favorites_inner,
             open_first_badged_comic_from_favorites as open_first_updated_comic_inner,
-            scan_detail_updates_with_scroll as scan_detail_updates_inner, DetailUpdateScanResult,
-            OpenComicResult, OpenFavoritesResult,
+            scan_detail_updates_with_scroll as scan_detail_updates_inner,
+            trigger_first_detail_update_download as trigger_first_detail_update_download_inner,
+            DetailUpdateScanResult, OpenComicResult, OpenFavoritesResult,
+            TriggerDetailDownloadResult,
         },
         process::{
             launch_mangacon as launch_mangacon_process,
@@ -86,6 +88,11 @@ fn scan_detail_updates() -> Result<DetailUpdateScanResult, String> {
     scan_detail_updates_inner().map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn trigger_first_detail_update_download() -> Result<TriggerDetailDownloadResult, String> {
+    trigger_first_detail_update_download_inner().map_err(|err| err.to_string())
+}
+
 fn import_favorites_inner(
     favorites_json_path: Option<String>,
     bookshelf_root: Option<String>,
@@ -141,7 +148,8 @@ pub fn run() {
             scan_mangacon_badges,
             open_mangacon_favorites,
             open_first_updated_comic,
-            scan_detail_updates
+            scan_detail_updates,
+            trigger_first_detail_update_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

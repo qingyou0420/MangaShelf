@@ -14,6 +14,7 @@ const HOME_FAVORITES_BUTTON_Y: i32 = 330;
 const TITLE_BAR_HEIGHT: i32 = 31;
 const BADGE_TO_CARD_CENTER_X_OFFSET: i32 = -57;
 const BADGE_TO_CARD_CENTER_Y_OFFSET: i32 = 76;
+const DETAIL_BADGE_TO_CHAPTER_BUTTON_X_OFFSET: i32 = 52;
 const DETAIL_SCAN_MAX_SCROLLS: u32 = 8;
 const DETAIL_SCAN_SCROLL_NOTCHES: i32 = 6;
 
@@ -52,6 +53,18 @@ pub struct DetailUpdateScanResult {
     pub width: u32,
     pub height: u32,
     pub badges: Vec<BadgePoint>,
+    pub scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerDetailDownloadResult {
+    pub window: MangaConWindow,
+    pub badge: BadgePoint,
+    pub clicked: WindowPoint,
+    pub width: u32,
+    pub height: u32,
+    pub remaining_badges: Vec<BadgePoint>,
     pub scroll_attempts: u32,
 }
 
@@ -144,10 +157,38 @@ pub fn scan_detail_updates_with_scroll() -> Result<DetailUpdateScanResult, Navig
     })
 }
 
+pub fn trigger_first_detail_update_download() -> Result<TriggerDetailDownloadResult, NavigationError>
+{
+    let scan = scan_detail_updates_with_scroll()?;
+    let badge = first_update_badge(&scan.badges).ok_or(NavigationError::NoUpdateBadge)?;
+    let clicked = detail_chapter_button_point_from_badge(badge);
+    foreground_click_window_point_once(scan.window.hwnd, clicked)?;
+
+    std::thread::sleep(std::time::Duration::from_millis(1_000));
+
+    let after_scan = scan_mangacon_detail_chapter_badges()?;
+    Ok(TriggerDetailDownloadResult {
+        window: after_scan.window,
+        badge,
+        clicked,
+        width: after_scan.width,
+        height: after_scan.height,
+        remaining_badges: after_scan.badges,
+        scroll_attempts: scan.scroll_attempts,
+    })
+}
+
 fn comic_card_point_from_badge(badge: BadgePoint) -> WindowPoint {
     WindowPoint {
         x: badge.x + BADGE_TO_CARD_CENTER_X_OFFSET,
         y: badge.y + BADGE_TO_CARD_CENTER_Y_OFFSET,
+    }
+}
+
+fn detail_chapter_button_point_from_badge(badge: BadgePoint) -> WindowPoint {
+    WindowPoint {
+        x: badge.x + DETAIL_BADGE_TO_CHAPTER_BUTTON_X_OFFSET,
+        y: badge.y,
     }
 }
 
@@ -223,10 +264,7 @@ fn foreground_click_window_point(hwnd: isize, point: WindowPoint) -> Result<(), 
     use std::ffi::c_void;
     use windows::Win32::{
         Foundation::{HWND, RECT},
-        UI::{
-            Input::KeyboardAndMouse::{mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP},
-            WindowsAndMessaging::{GetWindowRect, SetCursorPos, SetForegroundWindow},
-        },
+        UI::WindowsAndMessaging::{GetWindowRect, SetCursorPos, SetForegroundWindow},
     };
 
     if hwnd == 0 {
@@ -248,15 +286,70 @@ fn foreground_click_window_point(hwnd: isize, point: WindowPoint) -> Result<(), 
         SetCursorPos(screen_point.x, screen_point.y)
             .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
         std::thread::sleep(std::time::Duration::from_millis(80));
-        for _ in 0..2 {
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+        send_left_clicks(2);
     }
 
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn foreground_click_window_point_once(
+    _hwnd: isize,
+    _point: WindowPoint,
+) -> Result<(), NavigationError> {
+    Err(NavigationError::ClickFailed(
+        "仅 Windows 桌面版支持前台窗口点击".to_string(),
+    ))
+}
+
+#[cfg(windows)]
+fn foreground_click_window_point_once(
+    hwnd: isize,
+    point: WindowPoint,
+) -> Result<(), NavigationError> {
+    use std::ffi::c_void;
+    use windows::Win32::{
+        Foundation::{HWND, RECT},
+        UI::WindowsAndMessaging::{GetWindowRect, SetCursorPos, SetForegroundWindow},
+    };
+
+    if hwnd == 0 {
+        return Err(NavigationError::ClickFailed("窗口句柄无效".to_string()));
+    }
+
+    let hwnd = HWND(hwnd as *mut c_void);
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }
+        .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
+    let screen_point = screen_point_from_window_origin(point, rect.left, rect.top);
+
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    unsafe {
+        SetCursorPos(screen_point.x, screen_point.y)
+            .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        send_left_clicks(1);
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+unsafe fn send_left_clicks(count: usize) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    };
+
+    for _ in 0..count {
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 #[cfg(not(windows))]
@@ -375,6 +468,18 @@ mod tests {
     }
 
     #[test]
+    fn detail_chapter_button_point_uses_badge_left_marker() {
+        assert_eq!(
+            detail_chapter_button_point_from_badge(BadgePoint { x: 151, y: 516 }),
+            WindowPoint { x: 203, y: 516 }
+        );
+        assert_eq!(
+            detail_chapter_button_point_from_badge(BadgePoint { x: 20, y: 82 }),
+            WindowPoint { x: 72, y: 82 }
+        );
+    }
+
+    #[test]
     #[ignore = "requires MangaCon.exe on home screen"]
     fn manual_opens_favorites_from_home() {
         let result = open_favorites_from_home().expect("open favorites");
@@ -420,6 +525,20 @@ mod tests {
         println!(
             "scrolled {}, scanned {}x{}, detail badges: {:?}",
             result.scroll_attempts, result.width, result.height, result.badges
+        );
+    }
+
+    #[test]
+    #[ignore = "requires MangaCon.exe already on a comic detail page with update badges"]
+    fn manual_triggers_first_detail_update_download() {
+        let result =
+            trigger_first_detail_update_download().expect("trigger detail update download");
+
+        assert!(result.width > 300, "unexpected width: {}", result.width);
+        assert!(result.height > 200, "unexpected height: {}", result.height);
+        println!(
+            "badge {:?}, clicked {:?}, scrolled {}, remaining detail badges: {:?}",
+            result.badge, result.clicked, result.scroll_attempts, result.remaining_badges
         );
     }
 }

@@ -8,6 +8,7 @@ import type {
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
+  TriggerDetailDownloadResult,
 } from "./types";
 
 export interface ImportFavoritesOptions {
@@ -70,4 +71,8 @@ export function openFirstUpdatedComic(): Promise<OpenComicResult> {
 
 export function scanDetailUpdates(): Promise<DetailUpdateScanResult> {
   return invoke<DetailUpdateScanResult>("scan_detail_updates");
+}
+
+export function triggerFirstDetailUpdateDownload(): Promise<TriggerDetailDownloadResult> {
+  return invoke<TriggerDetailDownloadResult>("trigger_first_detail_update_download");
 }

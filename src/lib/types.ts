@@ -79,6 +79,16 @@ export interface DetailUpdateScanResult {
   scrollAttempts: number;
 }
 
+export interface TriggerDetailDownloadResult {
+  window: MangaConWindow;
+  badge: BadgePoint;
+  clicked: WindowPoint;
+  width: number;
+  height: number;
+  remainingBadges: BadgePoint[];
+  scrollAttempts: number;
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }
