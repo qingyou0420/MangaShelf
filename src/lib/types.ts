@@ -42,8 +42,21 @@ export interface BadgePoint {
   y: number;
 }
 
+export interface WindowPoint {
+  x: number;
+  y: number;
+}
+
 export interface MangaConBadgeScanResult {
   window: MangaConWindow;
+  width: number;
+  height: number;
+  badges: BadgePoint[];
+}
+
+export interface OpenFavoritesResult {
+  window: MangaConWindow;
+  clicked: WindowPoint;
   width: number;
   height: number;
   badges: BadgePoint[];

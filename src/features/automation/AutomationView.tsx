@@ -3,6 +3,7 @@ import {
   Clock3,
   ListChecks,
   MonitorDot,
+  PanelTopOpen,
   PlayCircle,
   RefreshCw,
   ScanSearch,
@@ -13,6 +14,7 @@ import {
   findMangaConWindows,
   getAutomationStatus,
   launchMangaCon,
+  openMangaConFavorites,
   scanMangaConBadges,
 } from "../../lib/api";
 import type {
@@ -21,6 +23,7 @@ import type {
   LaunchMangaConResult,
   MangaConBadgeScanResult,
   MangaConWindow,
+  OpenFavoritesResult,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
 
@@ -49,6 +52,7 @@ export interface AutomationService {
   launch: (executablePath: string) => Promise<LaunchMangaConResult>;
   getStatus: () => Promise<AutomationRunStatus>;
   scanBadges: () => Promise<MangaConBadgeScanResult>;
+  openFavorites: () => Promise<OpenFavoritesResult>;
 }
 
 const defaultAutomationService: AutomationService = {
@@ -56,6 +60,7 @@ const defaultAutomationService: AutomationService = {
   launch: (executablePath) => launchMangaCon({ executablePath }),
   getStatus: getAutomationStatus,
   scanBadges: scanMangaConBadges,
+  openFavorites: openMangaConFavorites,
 };
 
 export function AutomationView({
@@ -67,6 +72,7 @@ export function AutomationView({
   const [windows, setWindows] = useState<MangaConWindow[]>([]);
   const [launchResult, setLaunchResult] = useState<LaunchMangaConResult>();
   const [badgeScan, setBadgeScan] = useState<MangaConBadgeScanResult>();
+  const [openResult, setOpenResult] = useState<OpenFavoritesResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -117,6 +123,16 @@ export function AutomationView({
       setBadgeScan(result);
       setWindows([result.window]);
       setMessage("截图识别完成");
+    });
+  }
+
+  function handleOpenFavorites() {
+    void runAction("favorites", async () => {
+      const result = await service.openFavorites();
+      setOpenResult(result);
+      setBadgeScan(result);
+      setWindows([result.window]);
+      setMessage("收藏夹已打开");
     });
   }
 
@@ -211,6 +227,15 @@ export function AutomationView({
             <ScanSearch size={16} aria-hidden="true" />
             识别红点
           </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleOpenFavorites}
+            disabled={busyAction === "favorites"}
+          >
+            <PanelTopOpen size={16} aria-hidden="true" />
+            打开收藏夹
+          </button>
         </div>
         <dl className="link-state">
           <div>
@@ -238,6 +263,12 @@ export function AutomationView({
                 <dd>识别红点 {badgeScan.badges.length}</dd>
               </div>
             </>
+          )}
+          {openResult && (
+            <div>
+              <dt>最近点击</dt>
+              <dd>点击 {openResult.clicked.x},{openResult.clicked.y}</dd>
+            </div>
           )}
           {error && (
             <div>

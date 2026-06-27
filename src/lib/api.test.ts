@@ -4,6 +4,7 @@ import {
   getAutomationStatus,
   importFavorites,
   launchMangaCon,
+  openMangaConFavorites,
   scanMangaConBadges,
 } from "./api";
 
@@ -100,6 +101,24 @@ describe("importFavorites", () => {
       width: 850,
       height: 600,
       badges: [{ x: 164, y: 96 }],
+    });
+  });
+
+  it("封装打开漫画控收藏夹 command", async () => {
+    invokeMock.mockResolvedValue({
+      window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+      clicked: { x: 212, y: 330 },
+      width: 850,
+      height: 600,
+      badges: [{ x: 174, y: 95 }],
+    });
+
+    const result = await openMangaConFavorites();
+
+    expect(invokeMock).toHaveBeenCalledWith("open_mangacon_favorites");
+    expect(result).toMatchObject({
+      clicked: { x: 212, y: 330 },
+      badges: [{ x: 174, y: 95 }],
     });
   });
 });

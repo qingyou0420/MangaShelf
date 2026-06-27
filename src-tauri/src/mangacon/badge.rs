@@ -5,6 +5,13 @@ const NORMALIZATION_GRID: i32 = 4;
 const MIN_RED_BADGE_PIXELS: usize = 32;
 const MIN_BADGE_DIAMETER: i32 = 7;
 const MAX_BADGE_DIAMETER: i32 = 36;
+const FAVORITES_REFERENCE_WIDTH: usize = 850;
+const FAVORITES_REFERENCE_HEIGHT: usize = 600;
+const FAVORITES_BADGE_FIRST_X: i32 = 174;
+const FAVORITES_BADGE_FIRST_Y: i32 = 96;
+const FAVORITES_BADGE_COLUMN_STEP: i32 = 200;
+const FAVORITES_BADGE_ROW_STEP: i32 = 200;
+const FAVORITES_BADGE_GRID_TOLERANCE: i32 = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,6 +117,21 @@ pub fn detect_badge_points_from_rgba(width: usize, height: usize, rgba: &[u8]) -
         }
     }
 
+    badges.sort();
+    badges.dedup();
+    BadgeSample { badges }
+}
+
+pub fn detect_favorites_update_badges_from_rgba(
+    width: usize,
+    height: usize,
+    rgba: &[u8],
+) -> BadgeSample {
+    let mut badges = detect_badge_points_from_rgba(width, height, rgba)
+        .badges
+        .into_iter()
+        .filter(|badge| is_favorites_grid_badge(*badge, width, height))
+        .collect::<Vec<_>>();
     badges.sort();
     badges.dedup();
     BadgeSample { badges }
@@ -223,6 +245,47 @@ fn is_badge_red_pixel(rgba: &[u8], pixel_index: usize) -> bool {
         && red.saturating_sub(blue) >= 55
 }
 
+fn is_favorites_grid_badge(badge: BadgePoint, width: usize, height: usize) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+
+    let tolerance_x = scale_reference_axis(
+        FAVORITES_BADGE_GRID_TOLERANCE,
+        width,
+        FAVORITES_REFERENCE_WIDTH,
+    )
+    .max(12);
+    let tolerance_y = scale_reference_axis(
+        FAVORITES_BADGE_GRID_TOLERANCE,
+        height,
+        FAVORITES_REFERENCE_HEIGHT,
+    )
+    .max(12);
+
+    let mut expected_y = FAVORITES_BADGE_FIRST_Y;
+    while expected_y < FAVORITES_REFERENCE_HEIGHT as i32 {
+        let scaled_y = scale_reference_axis(expected_y, height, FAVORITES_REFERENCE_HEIGHT);
+        if (badge.y - scaled_y).abs() <= tolerance_y {
+            let mut expected_x = FAVORITES_BADGE_FIRST_X;
+            while expected_x < FAVORITES_REFERENCE_WIDTH as i32 {
+                let scaled_x = scale_reference_axis(expected_x, width, FAVORITES_REFERENCE_WIDTH);
+                if (badge.x - scaled_x).abs() <= tolerance_x {
+                    return true;
+                }
+                expected_x += FAVORITES_BADGE_COLUMN_STEP;
+            }
+        }
+        expected_y += FAVORITES_BADGE_ROW_STEP;
+    }
+
+    false
+}
+
+fn scale_reference_axis(value: i32, actual: usize, reference: usize) -> i32 {
+    ((i64::from(value) * actual as i64) / reference as i64) as i32
+}
+
 fn normalize_axis(value: i32) -> i32 {
     ((value + (NORMALIZATION_GRID / 2)).div_euclid(NORMALIZATION_GRID)) * NORMALIZATION_GRID
 }
@@ -280,6 +343,22 @@ mod tests {
         let sample = detect_badge_points_from_rgba(10, 10, &[255, 0, 0, 255]);
 
         assert_eq!(sample.badges, Vec::<BadgePoint>::new());
+    }
+
+    #[test]
+    fn filters_favorites_update_badges_to_cover_corner_grid() {
+        let width = 850;
+        let height = 600;
+        let mut rgba = vec![255_u8; width * height * 4];
+
+        draw_red_badge(&mut rgba, width, 174, 96, 8);
+        draw_red_badge(&mut rgba, width, 374, 296, 8);
+        draw_red_badge(&mut rgba, width, 136, 131, 8);
+        draw_red_badge(&mut rgba, width, 529, 326, 8);
+
+        let sample = detect_favorites_update_badges_from_rgba(width, height, &rgba);
+
+        assert_eq!(sample, BadgeSample::from_points([(174, 96), (374, 296)]));
     }
 
     fn draw_red_badge(rgba: &mut [u8], width: usize, cx: usize, cy: usize, radius: usize) {

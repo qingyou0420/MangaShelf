@@ -5,6 +5,7 @@ import type {
   LaunchMangaConResult,
   MangaConBadgeScanResult,
   MangaConWindow,
+  OpenFavoritesResult,
 } from "./types";
 
 export interface ImportFavoritesOptions {
@@ -47,4 +48,8 @@ export function getAutomationStatus(): Promise<AutomationRunStatus> {
 
 export function scanMangaConBadges(): Promise<MangaConBadgeScanResult> {
   return invoke<MangaConBadgeScanResult>("scan_mangacon_badges");
+}
+
+export function openMangaConFavorites(): Promise<OpenFavoritesResult> {
+  return invoke<OpenFavoritesResult>("open_mangacon_favorites");
 }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::mangacon::{
-    badge::{detect_badge_points_from_rgba, BadgePoint},
+    badge::{detect_favorites_update_badges_from_rgba, BadgePoint},
     window::{find_mangacon_windows, MangaConWindow},
 };
 
@@ -58,8 +58,11 @@ pub fn scan_mangacon_badges() -> Result<MangaConBadgeScanResult, WindowCaptureEr
         let Ok(image) = capture_window_rgba(window.hwnd) else {
             continue;
         };
-        let sample =
-            detect_badge_points_from_rgba(image.width as usize, image.height as usize, &image.rgba);
+        let sample = detect_favorites_update_badges_from_rgba(
+            image.width as usize,
+            image.height as usize,
+            &image.rgba,
+        );
         let scan = MangaConBadgeScanResult {
             window,
             width: image.width,
@@ -237,6 +240,7 @@ fn bgra_to_rgba(mut pixels: Vec<u8>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mangacon::badge::detect_badge_points_from_rgba;
     use crate::mangacon::window::find_mangacon_windows;
 
     #[test]

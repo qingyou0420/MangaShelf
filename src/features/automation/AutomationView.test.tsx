@@ -53,6 +53,13 @@ describe("AutomationView", () => {
           { x: 360, y: 96 },
         ],
       }),
+      openFavorites: async () => ({
+        window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+        clicked: { x: 212, y: 330 },
+        width: 850,
+        height: 600,
+        badges: [{ x: 174, y: 95 }],
+      }),
     };
 
     render(
@@ -86,5 +93,10 @@ describe("AutomationView", () => {
 
     expect(await screen.findByText("截图 850x600")).toBeInTheDocument();
     expect(screen.getByText("识别红点 2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打开收藏夹" }));
+
+    expect(await screen.findByText("点击 212,330")).toBeInTheDocument();
+    expect(screen.getByText("识别红点 1")).toBeInTheDocument();
   });
 });
