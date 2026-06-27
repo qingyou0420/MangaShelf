@@ -14,7 +14,7 @@ describe("Dashboard", () => {
     );
 
     expect(screen.getByText("漫画控伴侣")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "一键更新" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "一键更新收藏" })).toBeInTheDocument();
     expect(screen.getByText("漫画控状态")).toBeInTheDocument();
     expect(screen.getByText("E:\\漫画控\\MangaCon.exe")).toBeInTheDocument();
   });

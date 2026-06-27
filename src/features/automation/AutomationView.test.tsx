@@ -8,6 +8,7 @@ describe("AutomationView", () => {
 
     expect(screen.getByText("等待漫画控刷新收藏更新...")).toBeInTheDocument();
     expect(screen.getByText("稳定样本")).toBeInTheDocument();
+    expect(screen.getByText("红点 0")).toBeInTheDocument();
     expect(screen.getByText("流程时间线")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查看任务队列" })).toBeInTheDocument();
   });

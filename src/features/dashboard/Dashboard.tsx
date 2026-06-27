@@ -34,7 +34,7 @@ export function Dashboard({ paths, favorites, pendingTasks }: DashboardProps) {
         </div>
         <button className="primary-action" type="button">
           <RefreshCw size={18} aria-hidden="true" />
-          一键更新
+          一键更新收藏
         </button>
       </div>
 

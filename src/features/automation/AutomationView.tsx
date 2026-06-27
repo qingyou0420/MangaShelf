@@ -34,6 +34,7 @@ export function AutomationView() {
             使用已知收藏样本验证导入链路，避免在 UI 壳阶段依赖真实文件变动。
           </p>
           <div className="sample-strip">
+            <span>红点 0</span>
             <span>样本数 1</span>
             <span>匹配数 0</span>
             <span>错误 0</span>
