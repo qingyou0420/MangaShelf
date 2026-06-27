@@ -106,6 +106,31 @@ describe("AutomationView", () => {
         remainingBadges: [],
         scrollAttempts: 0,
       }),
+      triggerDetailUpdateDownloadBatch: async () => ({
+        requestedLimit: 20,
+        processed: 2,
+        stoppedReason: "no_update_badge" as const,
+        downloads: [
+          {
+            window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 151, y: 516 },
+            clicked: { x: 203, y: 516 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 0,
+          },
+          {
+            window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 273, y: 516 },
+            clicked: { x: 325, y: 516 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 0,
+          },
+        ],
+      }),
       triggerNextFavoriteUpdateDownload: async () => ({
         comic: {
           window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
@@ -125,10 +150,36 @@ describe("AutomationView", () => {
           remainingBadges: [],
           scrollAttempts: 4,
         },
+        downloadBatch: {
+          requestedLimit: 20,
+          processed: 2,
+          stoppedReason: "no_update_badge" as const,
+          downloads: [
+            {
+              window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+              badge: { x: 151, y: 516 },
+              clicked: { x: 203, y: 516 },
+              width: 850,
+              height: 600,
+              remainingBadges: [],
+              scrollAttempts: 4,
+            },
+            {
+              window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+              badge: { x: 273, y: 516 },
+              clicked: { x: 325, y: 516 },
+              width: 850,
+              height: 600,
+              remainingBadges: [],
+              scrollAttempts: 0,
+            },
+          ],
+        },
       }),
       triggerFavoriteUpdateBatch: async () => ({
         requestedLimit: 3,
         processed: 2,
+        downloadedChapters: 3,
         stoppedReason: "no_update_badge" as const,
         skipped: [
           {
@@ -163,6 +214,40 @@ describe("AutomationView", () => {
               height: 600,
               remainingBadges: [],
               scrollAttempts: 1,
+            },
+            downloadBatch: {
+              requestedLimit: 20,
+              processed: 3,
+              stoppedReason: "no_update_badge" as const,
+              downloads: [
+                {
+                  window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+                  badge: { x: 151, y: 516 },
+                  clicked: { x: 203, y: 516 },
+                  width: 850,
+                  height: 600,
+                  remainingBadges: [],
+                  scrollAttempts: 1,
+                },
+                {
+                  window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+                  badge: { x: 273, y: 516 },
+                  clicked: { x: 325, y: 516 },
+                  width: 850,
+                  height: 600,
+                  remainingBadges: [],
+                  scrollAttempts: 0,
+                },
+                {
+                  window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+                  badge: { x: 395, y: 516 },
+                  clicked: { x: 447, y: 516 },
+                  width: 850,
+                  height: 600,
+                  remainingBadges: [],
+                  scrollAttempts: 0,
+                },
+              ],
             },
           },
         ],
@@ -232,15 +317,21 @@ describe("AutomationView", () => {
     expect(await screen.findByText("章节红点 151,516")).toBeInTheDocument();
     expect(screen.getByText("章节点击 203,516")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "下载详情全部更新" }));
+
+    expect(await screen.findByText("详情批量章节 2/20")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "处理下一个收藏更新" }));
 
     expect(await screen.findByText("收藏点击 117,172")).toBeInTheDocument();
     expect(screen.getByText("收藏滚动定位 2 次")).toBeInTheDocument();
     expect(screen.getByText("更新下载点击 203,516")).toBeInTheDocument();
+    expect(screen.getByText("收藏章节下载 2")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "连续处理 3 个更新" }));
 
     expect(await screen.findByText("批量处理 2/3")).toBeInTheDocument();
+    expect(screen.getByText("章节下载 3")).toBeInTheDocument();
     expect(screen.getByText("跳过收藏 1")).toBeInTheDocument();
     expect(screen.getByText("停止原因 no_update_badge")).toBeInTheDocument();
   });

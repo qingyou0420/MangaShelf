@@ -10,6 +10,7 @@ import {
   scanDetailUpdates,
   scanFavoritesUpdates,
   scanMangaConBadges,
+  triggerDetailUpdateDownloadBatch,
   triggerFirstDetailUpdateDownload,
   triggerFavoriteUpdateBatch,
   triggerNextFavoriteUpdateDownload,
@@ -233,6 +234,52 @@ describe("importFavorites", () => {
     });
   });
 
+  it("封装批量触发详情页章节更新下载 command", async () => {
+    invokeMock.mockResolvedValue({
+      requestedLimit: 20,
+      processed: 2,
+      stoppedReason: "no_update_badge",
+      downloads: [
+        {
+          window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+          badge: { x: 151, y: 516 },
+          clicked: { x: 203, y: 516 },
+          width: 850,
+          height: 600,
+          remainingBadges: [{ x: 273, y: 516 }],
+          scrollAttempts: 0,
+        },
+        {
+          window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+          badge: { x: 273, y: 516 },
+          clicked: { x: 325, y: 516 },
+          width: 850,
+          height: 600,
+          remainingBadges: [],
+          scrollAttempts: 0,
+        },
+      ],
+    });
+
+    const result = await triggerDetailUpdateDownloadBatch({ maxChapters: 20 });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "trigger_detail_update_download_batch",
+      {
+        maxChapters: 20,
+      },
+    );
+    expect(result).toMatchObject({
+      requestedLimit: 20,
+      processed: 2,
+      stoppedReason: "no_update_badge",
+      downloads: [
+        { clicked: { x: 203, y: 516 } },
+        { clicked: { x: 325, y: 516 } },
+      ],
+    });
+  });
+
   it("封装处理下一个收藏更新 command", async () => {
     invokeMock.mockResolvedValue({
       comic: {
@@ -253,6 +300,31 @@ describe("importFavorites", () => {
         remainingBadges: [],
         scrollAttempts: 4,
       },
+      downloadBatch: {
+        requestedLimit: 20,
+        processed: 2,
+        stoppedReason: "no_update_badge",
+        downloads: [
+          {
+            window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 151, y: 516 },
+            clicked: { x: 203, y: 516 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 4,
+          },
+          {
+            window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+            badge: { x: 273, y: 516 },
+            clicked: { x: 325, y: 516 },
+            width: 850,
+            height: 600,
+            remainingBadges: [],
+            scrollAttempts: 0,
+          },
+        ],
+      },
     });
 
     const result = await triggerNextFavoriteUpdateDownload();
@@ -269,6 +341,9 @@ describe("importFavorites", () => {
         clicked: { x: 203, y: 516 },
         scrollAttempts: 4,
       },
+      downloadBatch: {
+        processed: 2,
+      },
     });
   });
 
@@ -276,6 +351,7 @@ describe("importFavorites", () => {
     invokeMock.mockResolvedValue({
       requestedLimit: 3,
       processed: 2,
+      downloadedChapters: 3,
       stoppedReason: "no_update_badge",
       skipped: [
         {
@@ -311,6 +387,40 @@ describe("importFavorites", () => {
             remainingBadges: [],
             scrollAttempts: 1,
           },
+          downloadBatch: {
+            requestedLimit: 20,
+            processed: 3,
+            stoppedReason: "no_update_badge",
+            downloads: [
+              {
+                window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+                badge: { x: 151, y: 516 },
+                clicked: { x: 203, y: 516 },
+                width: 850,
+                height: 600,
+                remainingBadges: [],
+                scrollAttempts: 1,
+              },
+              {
+                window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+                badge: { x: 273, y: 516 },
+                clicked: { x: 325, y: 516 },
+                width: 850,
+                height: 600,
+                remainingBadges: [],
+                scrollAttempts: 0,
+              },
+              {
+                window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+                badge: { x: 395, y: 516 },
+                clicked: { x: 447, y: 516 },
+                width: 850,
+                height: 600,
+                remainingBadges: [],
+                scrollAttempts: 0,
+              },
+            ],
+          },
         },
       ],
     });
@@ -323,6 +433,7 @@ describe("importFavorites", () => {
     expect(result).toMatchObject({
       requestedLimit: 3,
       processed: 2,
+      downloadedChapters: 3,
       stoppedReason: "no_update_badge",
       skipped: [
         {

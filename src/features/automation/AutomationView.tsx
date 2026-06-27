@@ -21,6 +21,7 @@ import {
   scanDetailUpdates,
   scanFavoritesUpdates,
   scanMangaConBadges,
+  triggerDetailUpdateDownloadBatch,
   triggerFavoriteUpdateBatch,
   triggerFirstDetailUpdateDownload,
   triggerNextFavoriteUpdateDownload,
@@ -35,6 +36,7 @@ import type {
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
+  TriggerDetailDownloadBatchResult,
   TriggerDetailDownloadResult,
   TriggerFavoriteUpdateBatchResult,
   TriggerNextFavoriteUpdateDownloadResult,
@@ -72,6 +74,7 @@ export interface AutomationService {
   openFirstUpdatedComic: () => Promise<OpenComicResult>;
   scanDetailUpdates: () => Promise<DetailUpdateScanResult>;
   triggerFirstDetailUpdateDownload: () => Promise<TriggerDetailDownloadResult>;
+  triggerDetailUpdateDownloadBatch: () => Promise<TriggerDetailDownloadBatchResult>;
   triggerNextFavoriteUpdateDownload: () => Promise<TriggerNextFavoriteUpdateDownloadResult>;
   triggerFavoriteUpdateBatch: (maxUpdates: number) => Promise<TriggerFavoriteUpdateBatchResult>;
 }
@@ -87,6 +90,8 @@ const defaultAutomationService: AutomationService = {
   openFirstUpdatedComic,
   scanDetailUpdates,
   triggerFirstDetailUpdateDownload,
+  triggerDetailUpdateDownloadBatch: () =>
+    triggerDetailUpdateDownloadBatch({ maxChapters: 20 }),
   triggerNextFavoriteUpdateDownload,
   triggerFavoriteUpdateBatch: (maxUpdates) => triggerFavoriteUpdateBatch({ maxUpdates }),
 };
@@ -107,6 +112,8 @@ export function AutomationView({
   const [detailUpdateScan, setDetailUpdateScan] = useState<DetailUpdateScanResult>();
   const [triggerDownloadResult, setTriggerDownloadResult] =
     useState<TriggerDetailDownloadResult>();
+  const [triggerDownloadBatchResult, setTriggerDownloadBatchResult] =
+    useState<TriggerDetailDownloadBatchResult>();
   const [nextFavoriteUpdateResult, setNextFavoriteUpdateResult] =
     useState<TriggerNextFavoriteUpdateDownloadResult>();
   const [favoriteUpdateBatchResult, setFavoriteUpdateBatchResult] =
@@ -158,6 +165,7 @@ export function AutomationView({
       setOpenComicResult(undefined);
       setDetailUpdateScan(undefined);
       setTriggerDownloadResult(undefined);
+      setTriggerDownloadBatchResult(undefined);
       setNextFavoriteUpdateResult(undefined);
       setFavoriteUpdateBatchResult(undefined);
       setMessage("漫画控已重启，等待刷新红点");
@@ -224,6 +232,18 @@ export function AutomationView({
       setTriggerDownloadResult(result);
       setWindows([result.window]);
       setMessage("首个章节更新已交给漫画控");
+    });
+  }
+
+  function handleTriggerDetailUpdateDownloadBatch() {
+    void runAction("trigger-detail-download-batch", async () => {
+      const result = await service.triggerDetailUpdateDownloadBatch();
+      setTriggerDownloadBatchResult(result);
+      const lastDownload = result.downloads.at(-1);
+      if (lastDownload) {
+        setWindows([lastDownload.window]);
+      }
+      setMessage("详情页章节更新已批量交给漫画控");
     });
   }
 
@@ -396,6 +416,15 @@ export function AutomationView({
           <button
             className="secondary-action"
             type="button"
+            onClick={handleTriggerDetailUpdateDownloadBatch}
+            disabled={busyAction === "trigger-detail-download-batch"}
+          >
+            <MousePointerClick size={16} aria-hidden="true" />
+            下载详情全部更新
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
             onClick={handleTriggerNextFavoriteUpdateDownload}
             disabled={busyAction === "trigger-next-favorite-update"}
           >
@@ -523,7 +552,22 @@ export function AutomationView({
                   {nextFavoriteUpdateResult.download.clicked.y}
                 </dd>
               </div>
+              <div>
+                <dt>收藏章节下载</dt>
+                <dd>
+                  收藏章节下载 {nextFavoriteUpdateResult.downloadBatch.processed}
+                </dd>
+              </div>
             </>
+          )}
+          {triggerDownloadBatchResult && (
+            <div>
+              <dt>详情批量章节</dt>
+              <dd>
+                详情批量章节 {triggerDownloadBatchResult.processed}/
+                {triggerDownloadBatchResult.requestedLimit}
+              </dd>
+            </div>
           )}
           {favoriteUpdateBatchResult && (
             <>
@@ -537,6 +581,10 @@ export function AutomationView({
               <div>
                 <dt>跳过收藏</dt>
                 <dd>跳过收藏 {favoriteUpdateBatchResult.skipped.length}</dd>
+              </div>
+              <div>
+                <dt>章节下载</dt>
+                <dd>章节下载 {favoriteUpdateBatchResult.downloadedChapters}</dd>
               </div>
               <div>
                 <dt>停止原因</dt>

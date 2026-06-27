@@ -107,9 +107,21 @@ export interface TriggerDetailDownloadResult {
   scrollAttempts: number;
 }
 
+export type DetailUpdateBatchStoppedReason =
+  | "limit_reached"
+  | "no_update_badge";
+
+export interface TriggerDetailDownloadBatchResult {
+  requestedLimit: number;
+  processed: number;
+  stoppedReason: DetailUpdateBatchStoppedReason;
+  downloads: TriggerDetailDownloadResult[];
+}
+
 export interface TriggerNextFavoriteUpdateDownloadResult {
   comic: OpenScrolledComicResult;
   download: TriggerDetailDownloadResult;
+  downloadBatch: TriggerDetailDownloadBatchResult;
 }
 
 export type FavoriteUpdateSkipReason = "detail_no_update_badge";
@@ -127,6 +139,7 @@ export type FavoriteUpdateBatchStoppedReason =
 export interface TriggerFavoriteUpdateBatchResult {
   requestedLimit: number;
   processed: number;
+  downloadedChapters: number;
   stoppedReason: FavoriteUpdateBatchStoppedReason;
   skipped: SkippedFavoriteUpdateResult[];
   items: TriggerNextFavoriteUpdateDownloadResult[];

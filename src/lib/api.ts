@@ -9,6 +9,7 @@ import type {
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
+  TriggerDetailDownloadBatchResult,
   TriggerDetailDownloadResult,
   TriggerFavoriteUpdateBatchResult,
   TriggerNextFavoriteUpdateDownloadResult,
@@ -28,6 +29,10 @@ export interface LaunchMangaConOptions {
 
 export interface TriggerFavoriteUpdateBatchOptions {
   maxUpdates?: number;
+}
+
+export interface TriggerDetailUpdateBatchOptions {
+  maxChapters?: number;
 }
 
 export function importFavorites(
@@ -86,6 +91,17 @@ export function scanFavoritesUpdates(): Promise<FavoritesUpdateScanResult> {
 
 export function triggerFirstDetailUpdateDownload(): Promise<TriggerDetailDownloadResult> {
   return invoke<TriggerDetailDownloadResult>("trigger_first_detail_update_download");
+}
+
+export function triggerDetailUpdateDownloadBatch(
+  options: TriggerDetailUpdateBatchOptions = {},
+): Promise<TriggerDetailDownloadBatchResult> {
+  return invoke<TriggerDetailDownloadBatchResult>(
+    "trigger_detail_update_download_batch",
+    {
+      maxChapters: options.maxChapters,
+    },
+  );
 }
 
 export function triggerNextFavoriteUpdateDownload(): Promise<TriggerNextFavoriteUpdateDownloadResult> {
