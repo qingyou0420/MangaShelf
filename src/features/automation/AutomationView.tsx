@@ -22,6 +22,7 @@ import {
   scanFavoritesUpdates,
   scanMangaConBadges,
   triggerAllFavoriteUpdates,
+  triggerAllFavoriteUpdatesWithRecovery,
   triggerDetailUpdateDownloadBatch,
   triggerFavoriteUpdateBatch,
   triggerFirstDetailUpdateDownload,
@@ -37,6 +38,7 @@ import type {
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
+  RecoveringFavoriteUpdateResult,
   TriggerDetailDownloadBatchResult,
   TriggerDetailDownloadResult,
   TriggerFavoriteUpdateBatchResult,
@@ -79,6 +81,9 @@ export interface AutomationService {
   triggerNextFavoriteUpdateDownload: () => Promise<TriggerNextFavoriteUpdateDownloadResult>;
   triggerFavoriteUpdateBatch: (maxUpdates: number) => Promise<TriggerFavoriteUpdateBatchResult>;
   triggerAllFavoriteUpdates: () => Promise<TriggerFavoriteUpdateBatchResult>;
+  triggerAllFavoriteUpdatesWithRecovery: (
+    executablePath: string,
+  ) => Promise<RecoveringFavoriteUpdateResult>;
 }
 
 const defaultAutomationService: AutomationService = {
@@ -97,6 +102,12 @@ const defaultAutomationService: AutomationService = {
   triggerNextFavoriteUpdateDownload,
   triggerFavoriteUpdateBatch: (maxUpdates) => triggerFavoriteUpdateBatch({ maxUpdates }),
   triggerAllFavoriteUpdates: () => triggerAllFavoriteUpdates({ maxComics: 500 }),
+  triggerAllFavoriteUpdatesWithRecovery: (executablePath) =>
+    triggerAllFavoriteUpdatesWithRecovery({
+      executablePath,
+      maxComics: 500,
+      maxRestarts: 2,
+    }),
 };
 
 export function AutomationView({
@@ -123,6 +134,8 @@ export function AutomationView({
     useState<TriggerFavoriteUpdateBatchResult>();
   const [allFavoriteUpdateResult, setAllFavoriteUpdateResult] =
     useState<TriggerFavoriteUpdateBatchResult>();
+  const [recoveryFavoriteUpdateResult, setRecoveryFavoriteUpdateResult] =
+    useState<RecoveringFavoriteUpdateResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -174,6 +187,7 @@ export function AutomationView({
       setNextFavoriteUpdateResult(undefined);
       setFavoriteUpdateBatchResult(undefined);
       setAllFavoriteUpdateResult(undefined);
+      setRecoveryFavoriteUpdateResult(undefined);
       setMessage("漫画控已重启，等待刷新红点");
       setWindows(await service.findWindows());
     });
@@ -283,6 +297,21 @@ export function AutomationView({
         setWindows([lastItem.download.window]);
       }
       setMessage("全部收藏更新处理完成");
+    });
+  }
+
+  function handleTriggerAllFavoriteUpdatesWithRecovery() {
+    void runAction("trigger-all-favorite-updates-recovery", async () => {
+      const result = await service.triggerAllFavoriteUpdatesWithRecovery(
+        paths.mangaConExecutable,
+      );
+      setRecoveryFavoriteUpdateResult(result);
+      const lastRun = result.runs.at(-1);
+      const lastItem = lastRun?.items.at(-1);
+      if (lastItem) {
+        setWindows([lastItem.download.window]);
+      }
+      setMessage("自动恢复收藏更新处理完成");
     });
   }
 
@@ -467,6 +496,15 @@ export function AutomationView({
             <MousePointerClick size={16} aria-hidden="true" />
             更新全部收藏
           </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleTriggerAllFavoriteUpdatesWithRecovery}
+            disabled={busyAction === "trigger-all-favorite-updates-recovery"}
+          >
+            <MousePointerClick size={16} aria-hidden="true" />
+            自动恢复更新全部
+          </button>
         </div>
         <dl className="link-state">
           <div>
@@ -639,6 +677,38 @@ export function AutomationView({
               <div>
                 <dt>全部停止原因</dt>
                 <dd>全部停止原因 {allFavoriteUpdateResult.stoppedReason}</dd>
+              </div>
+            </>
+          )}
+          {recoveryFavoriteUpdateResult && (
+            <>
+              <div>
+                <dt>恢复处理</dt>
+                <dd>
+                  恢复处理 {recoveryFavoriteUpdateResult.processed}/
+                  {recoveryFavoriteUpdateResult.requestedLimit}
+                </dd>
+              </div>
+              <div>
+                <dt>恢复章节下载</dt>
+                <dd>
+                  恢复章节下载 {recoveryFavoriteUpdateResult.downloadedChapters}
+                </dd>
+              </div>
+              <div>
+                <dt>恢复重启</dt>
+                <dd>
+                  恢复重启 {recoveryFavoriteUpdateResult.restarts}/
+                  {recoveryFavoriteUpdateResult.maxRestarts}
+                </dd>
+              </div>
+              <div>
+                <dt>恢复跳过收藏</dt>
+                <dd>恢复跳过收藏 {recoveryFavoriteUpdateResult.skippedCount}</dd>
+              </div>
+              <div>
+                <dt>恢复停止原因</dt>
+                <dd>恢复停止原因 {recoveryFavoriteUpdateResult.stoppedReason}</dd>
               </div>
             </>
           )}

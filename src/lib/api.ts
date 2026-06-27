@@ -9,6 +9,7 @@ import type {
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
+  RecoveringFavoriteUpdateResult,
   TriggerDetailDownloadBatchResult,
   TriggerDetailDownloadResult,
   TriggerFavoriteUpdateBatchResult,
@@ -33,6 +34,12 @@ export interface TriggerFavoriteUpdateBatchOptions {
 
 export interface TriggerAllFavoriteUpdatesOptions {
   maxComics?: number;
+}
+
+export interface TriggerAllFavoriteUpdatesWithRecoveryOptions {
+  executablePath: string;
+  maxComics?: number;
+  maxRestarts?: number;
 }
 
 export interface TriggerDetailUpdateBatchOptions {
@@ -131,4 +138,17 @@ export function triggerAllFavoriteUpdates(
   return invoke<TriggerFavoriteUpdateBatchResult>("trigger_all_favorite_updates", {
     maxComics: options.maxComics,
   });
+}
+
+export function triggerAllFavoriteUpdatesWithRecovery(
+  options: TriggerAllFavoriteUpdatesWithRecoveryOptions,
+): Promise<RecoveringFavoriteUpdateResult> {
+  return invoke<RecoveringFavoriteUpdateResult>(
+    "trigger_all_favorite_updates_with_recovery",
+    {
+      executablePath: options.executablePath,
+      maxComics: options.maxComics,
+      maxRestarts: options.maxRestarts,
+    },
+  );
 }

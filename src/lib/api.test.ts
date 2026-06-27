@@ -11,6 +11,7 @@ import {
   scanFavoritesUpdates,
   scanMangaConBadges,
   triggerAllFavoriteUpdates,
+  triggerAllFavoriteUpdatesWithRecovery,
   triggerDetailUpdateDownloadBatch,
   triggerFirstDetailUpdateDownload,
   triggerFavoriteUpdateBatch,
@@ -469,6 +470,43 @@ describe("importFavorites", () => {
       processed: 447,
       downloadedChapters: 520,
       stoppedReason: "no_update_badge",
+    });
+  });
+
+  it("封装自动恢复全量处理收藏更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      requestedLimit: 500,
+      maxRestarts: 2,
+      restarts: 1,
+      processed: 447,
+      downloadedChapters: 520,
+      skippedCount: 3,
+      stoppedReason: "completed",
+      lastError: null,
+      runs: [],
+    });
+
+    const result = await triggerAllFavoriteUpdatesWithRecovery({
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+      maxComics: 500,
+      maxRestarts: 2,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "trigger_all_favorite_updates_with_recovery",
+      {
+        executablePath: "E:\\漫画控\\MangaCon.exe",
+        maxComics: 500,
+        maxRestarts: 2,
+      },
+    );
+    expect(result).toMatchObject({
+      requestedLimit: 500,
+      maxRestarts: 2,
+      restarts: 1,
+      processed: 447,
+      downloadedChapters: 520,
+      stoppedReason: "completed",
     });
   });
 });

@@ -145,6 +145,22 @@ export interface TriggerFavoriteUpdateBatchResult {
   items: TriggerNextFavoriteUpdateDownloadResult[];
 }
 
+export type FavoriteUpdateRecoveryStoppedReason =
+  | "completed"
+  | "restart_limit_reached";
+
+export interface RecoveringFavoriteUpdateResult {
+  requestedLimit: number;
+  maxRestarts: number;
+  restarts: number;
+  processed: number;
+  downloadedChapters: number;
+  skippedCount: number;
+  stoppedReason: FavoriteUpdateRecoveryStoppedReason;
+  lastError: string | null;
+  runs: TriggerFavoriteUpdateBatchResult[];
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }

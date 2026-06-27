@@ -685,7 +685,7 @@ fn favorite_update_batch_limit(max_updates: Option<u32>) -> u32 {
         .clamp(1, FAVORITE_UPDATE_BATCH_MAX_LIMIT)
 }
 
-fn favorite_update_all_limit(max_comics: Option<u32>) -> u32 {
+pub(crate) fn favorite_update_all_limit(max_comics: Option<u32>) -> u32 {
     max_comics
         .unwrap_or(FAVORITE_UPDATE_ALL_DEFAULT_LIMIT)
         .clamp(1, FAVORITE_UPDATE_ALL_MAX_LIMIT)

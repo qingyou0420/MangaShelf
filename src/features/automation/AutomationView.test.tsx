@@ -260,6 +260,17 @@ describe("AutomationView", () => {
         skipped: [],
         items: [],
       }),
+      triggerAllFavoriteUpdatesWithRecovery: async () => ({
+        requestedLimit: 500,
+        maxRestarts: 2,
+        restarts: 1,
+        processed: 447,
+        downloadedChapters: 520,
+        skippedCount: 3,
+        stoppedReason: "completed" as const,
+        lastError: null,
+        runs: [],
+      }),
     };
 
     render(
@@ -349,5 +360,13 @@ describe("AutomationView", () => {
     expect(screen.getByText("全部章节下载 520")).toBeInTheDocument();
     expect(screen.getByText("全部跳过收藏 0")).toBeInTheDocument();
     expect(screen.getByText("全部停止原因 no_update_badge")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "自动恢复更新全部" }));
+
+    expect(await screen.findByText("恢复处理 447/500")).toBeInTheDocument();
+    expect(screen.getByText("恢复章节下载 520")).toBeInTheDocument();
+    expect(screen.getByText("恢复重启 1/2")).toBeInTheDocument();
+    expect(screen.getByText("恢复跳过收藏 3")).toBeInTheDocument();
+    expect(screen.getByText("恢复停止原因 completed")).toBeInTheDocument();
   });
 });

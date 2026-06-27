@@ -6,6 +6,8 @@ pub mod domain;
 pub mod favorites;
 pub mod mangacon;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     automation::AutomationRunStatus,
     bookshelf::{match_local_manga, scan_bookshelf},
@@ -16,7 +18,7 @@ use crate::{
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
         navigation::{
-            open_favorites_from_home as open_mangacon_favorites_inner,
+            favorite_update_all_limit, open_favorites_from_home as open_mangacon_favorites_inner,
             open_first_badged_comic_from_favorites as open_first_updated_comic_inner,
             scan_detail_updates_with_scroll as scan_detail_updates_inner,
             scan_favorites_updates_with_scroll as scan_favorites_updates_inner,
@@ -36,7 +38,32 @@ use crate::{
         window::MangaConWindow,
     },
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, thread, time::Duration};
+
+const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
+const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
+const MANGACON_RECOVERY_REFRESH_WAIT_MS: u64 = 12_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FavoriteUpdateRecoveryStoppedReason {
+    Completed,
+    RestartLimitReached,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveringFavoriteUpdateResult {
+    pub requested_limit: u32,
+    pub max_restarts: u32,
+    pub restarts: u32,
+    pub processed: u32,
+    pub downloaded_chapters: u32,
+    pub skipped_count: u32,
+    pub stopped_reason: FavoriteUpdateRecoveryStoppedReason,
+    pub last_error: Option<String>,
+    pub runs: Vec<TriggerFavoriteUpdateBatchResult>,
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -131,6 +158,15 @@ fn trigger_all_favorite_updates(
     trigger_all_favorite_updates_inner(max_comics).map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn trigger_all_favorite_updates_with_recovery(
+    executable_path: String,
+    max_comics: Option<u32>,
+    max_restarts: Option<u32>,
+) -> Result<RecoveringFavoriteUpdateResult, String> {
+    trigger_all_favorite_updates_with_recovery_inner(executable_path, max_comics, max_restarts)
+}
+
 fn import_favorites_inner(
     favorites_json_path: Option<String>,
     bookshelf_root: Option<String>,
@@ -172,6 +208,82 @@ fn import_favorites_inner(
     })
 }
 
+fn trigger_all_favorite_updates_with_recovery_inner(
+    executable_path: String,
+    max_comics: Option<u32>,
+    max_restarts: Option<u32>,
+) -> Result<RecoveringFavoriteUpdateResult, String> {
+    let requested_limit = favorite_update_all_limit(max_comics);
+    let max_restarts = favorite_update_recovery_restart_limit(max_restarts);
+    let mut restarts = 0;
+    let mut last_error = None;
+    let mut runs = Vec::new();
+
+    loop {
+        match trigger_all_favorite_updates_inner(Some(requested_limit)) {
+            Ok(run) => {
+                runs.push(run);
+                return Ok(recovering_favorite_update_result(
+                    requested_limit,
+                    max_restarts,
+                    restarts,
+                    FavoriteUpdateRecoveryStoppedReason::Completed,
+                    last_error,
+                    runs,
+                ));
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+                if restarts >= max_restarts {
+                    return Ok(recovering_favorite_update_result(
+                        requested_limit,
+                        max_restarts,
+                        restarts,
+                        FavoriteUpdateRecoveryStoppedReason::RestartLimitReached,
+                        last_error,
+                        runs,
+                    ));
+                }
+
+                restart_mangacon_process(&executable_path).map_err(|err| err.to_string())?;
+                restarts += 1;
+                thread::sleep(Duration::from_millis(MANGACON_RECOVERY_REFRESH_WAIT_MS));
+            }
+        }
+    }
+}
+
+fn recovering_favorite_update_result(
+    requested_limit: u32,
+    max_restarts: u32,
+    restarts: u32,
+    stopped_reason: FavoriteUpdateRecoveryStoppedReason,
+    last_error: Option<String>,
+    runs: Vec<TriggerFavoriteUpdateBatchResult>,
+) -> RecoveringFavoriteUpdateResult {
+    let processed = runs.iter().map(|run| run.processed).sum();
+    let downloaded_chapters = runs.iter().map(|run| run.downloaded_chapters).sum();
+    let skipped_count = runs.iter().map(|run| run.skipped.len() as u32).sum();
+
+    RecoveringFavoriteUpdateResult {
+        requested_limit,
+        max_restarts,
+        restarts,
+        processed,
+        downloaded_chapters,
+        skipped_count,
+        stopped_reason,
+        last_error,
+        runs,
+    }
+}
+
+fn favorite_update_recovery_restart_limit(max_restarts: Option<u32>) -> u32 {
+    max_restarts
+        .unwrap_or(FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS)
+        .clamp(0, FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -192,7 +304,8 @@ pub fn run() {
             trigger_detail_update_download_batch,
             trigger_next_favorite_update_download,
             trigger_favorite_update_batch,
-            trigger_all_favorite_updates
+            trigger_all_favorite_updates,
+            trigger_all_favorite_updates_with_recovery
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -224,6 +337,14 @@ mod tests {
         assert_eq!(summary.imported, 1);
         assert_eq!(summary.favorites[0].source_uri, "cp:ruoshijiechuyuheiye");
         assert_eq!(summary.favorites[0].source_scheme.as_deref(), Some("cp"));
+    }
+
+    #[test]
+    fn favorite_update_recovery_restart_limit_is_safe_and_bounded() {
+        assert_eq!(favorite_update_recovery_restart_limit(None), 2);
+        assert_eq!(favorite_update_recovery_restart_limit(Some(0)), 0);
+        assert_eq!(favorite_update_recovery_restart_limit(Some(4)), 4);
+        assert_eq!(favorite_update_recovery_restart_limit(Some(99)), 5);
     }
 
     #[test]
