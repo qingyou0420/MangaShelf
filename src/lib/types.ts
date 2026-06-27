@@ -6,11 +6,17 @@ export interface CompanionPaths {
 
 export interface MangaConFavorite {
   id: string;
-  title: string;
+  name: string;
+  location: string;
   tags: string[];
-  sourceUrl?: string;
-  author?: string;
-  favoritedAt?: string;
+  sourceUri: string;
+  sourceScheme?: string;
+  sourceDomain?: string;
+  localPath?: string;
+  chapterCount: number;
+  imageCount: number;
+  readProgressPage: number;
+  scanStatus: "pending" | "missing" | "matched" | "imported" | "error";
 }
 
 export interface BookshelfMatch {
@@ -22,6 +28,6 @@ export interface BookshelfMatch {
 
 export interface ImportFavoritesResult {
   imported: number;
+  matched: number;
   favorites: MangaConFavorite[];
-  unmatchedTitles: string[];
 }

@@ -7,9 +7,14 @@ export const approvedDefaultPaths: CompanionPaths = {
 };
 
 export const sampleFavorite: MangaConFavorite = {
-  id: "fav-001",
-  title: "孤独摇滚",
-  tags: ["音乐", "日常"],
-  author: "はまじあき",
-  favoritedAt: "2026-05-28T18:46:24Z",
+  id: "cp:ruoshijiechuyuheiye",
+  name: "若世界處於黑夜",
+  location: "若世界處於黑夜",
+  tags: ["むちまろ"],
+  sourceUri: "cp:ruoshijiechuyuheiye",
+  sourceScheme: "cp",
+  chapterCount: 0,
+  imageCount: 0,
+  readProgressPage: 0,
+  scanStatus: "pending",
 };

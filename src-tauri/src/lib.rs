@@ -42,23 +42,30 @@ fn import_favorites_inner(
         .map(PathBuf::from)
         .unwrap_or(defaults.bookshelf_root);
 
-    let favorites = import_mangacon_favorites(favorites_path)?;
+    let mut comics = import_mangacon_favorites(favorites_path)?;
     let library = scan_bookshelf(bookshelf_root)?;
     let db = CompanionDatabase::open(database_path)?;
     db.migrate()?;
 
-    for favorite in &favorites {
-        let local_match = match_local_manga(&favorite.title, &library);
-        db.upsert_favorite(favorite, local_match.as_ref())?;
+    for comic in &mut comics {
+        if let Some(local_match) = match_local_manga(comic.title(), &library) {
+            comic.local_path = Some(local_match.directory);
+            comic.chapter_count = local_match.chapter_count;
+            comic.image_count = local_match.image_count;
+            comic.scan_status = domain::ScanStatus::Matched;
+        } else {
+            comic.scan_status = domain::ScanStatus::Missing;
+        }
+        db.upsert_comic(comic)?;
     }
 
-    let records = db.list_favorites()?;
+    let records = db.list_comics()?;
     let matched = records
         .iter()
-        .filter(|record| record.local_match.is_some())
+        .filter(|record| record.local_path.is_some())
         .count();
     Ok(ImportSummary {
-        imported: favorites.len(),
+        imported: comics.len(),
         matched,
         favorites: records,
     })
@@ -71,4 +78,33 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![greet, import_favorites])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn import_favorites_summary_exposes_source_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let favorites_path = temp.path().join("favorites.json");
+        let db_path = temp.path().join("state.sqlite");
+        fs::write(
+            &favorites_path,
+            r#"{"favorites":[{"location":"若世界處於黑夜","name":"若世界處於黑夜","tags":["むちまろ"],"uri":"cp:ruoshijiechuyuheiye"}]}"#,
+        )
+        .expect("favorites fixture");
+
+        let summary = import_favorites_inner(
+            Some(favorites_path.display().to_string()),
+            Some(temp.path().display().to_string()),
+            db_path.display().to_string(),
+        )
+        .expect("import summary");
+
+        assert_eq!(summary.imported, 1);
+        assert_eq!(summary.favorites[0].source_uri, "cp:ruoshijiechuyuheiye");
+        assert_eq!(summary.favorites[0].source_scheme.as_deref(), Some("cp"));
+    }
 }

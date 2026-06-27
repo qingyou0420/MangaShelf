@@ -12,9 +12,12 @@ describe("shared MangaCon companion types", () => {
 
   it("models imported favorites with stable ids, titles, and tags", () => {
     expect(sampleFavorite).toMatchObject({
-      id: "fav-001",
-      title: "孤独摇滚",
-      tags: ["音乐", "日常"],
+      id: "cp:ruoshijiechuyuheiye",
+      name: "若世界處於黑夜",
+      location: "若世界處於黑夜",
+      sourceUri: "cp:ruoshijiechuyuheiye",
+      sourceScheme: "cp",
+      tags: ["むちまろ"],
     });
   });
 });

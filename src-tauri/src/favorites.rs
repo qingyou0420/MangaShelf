@@ -1,14 +1,14 @@
-use crate::domain::Favorite;
+use crate::domain::Comic;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::{fs, path::Path};
 
-pub fn import_mangacon_favorites(path: impl AsRef<Path>) -> Result<Vec<Favorite>> {
+pub fn import_mangacon_favorites(path: impl AsRef<Path>) -> Result<Vec<Comic>> {
     let raw = fs::read_to_string(path)?;
     import_mangacon_favorites_from_str(&raw)
 }
 
-pub fn import_mangacon_favorites_from_str(raw: &str) -> Result<Vec<Favorite>> {
+pub fn import_mangacon_favorites_from_str(raw: &str) -> Result<Vec<Comic>> {
     let value: Value = serde_json::from_str(raw)?;
     let items = favorite_items(&value)
         .ok_or_else(|| anyhow!("MangaCon favorites JSON did not contain a favorites array"))?;
@@ -16,7 +16,7 @@ pub fn import_mangacon_favorites_from_str(raw: &str) -> Result<Vec<Favorite>> {
     items
         .iter()
         .map(parse_favorite)
-        .collect::<Result<Vec<Favorite>>>()
+        .collect::<Result<Vec<Comic>>>()
 }
 
 fn favorite_items(value: &Value) -> Option<&Vec<Value>> {
@@ -29,19 +29,19 @@ fn favorite_items(value: &Value) -> Option<&Vec<Value>> {
         .find_map(|key| value.get(key)?.as_array())
 }
 
-fn parse_favorite(value: &Value) -> Result<Favorite> {
-    let title = string_field(value, &["title", "name", "comicName", "bookName"])
-        .ok_or_else(|| anyhow!("favorite is missing title/name"))?;
-    let source_url = string_field(value, &["sourceUrl", "url", "link", "href"]);
-    let mut favorite = Favorite::new(title, source_url.as_deref());
+fn parse_favorite(value: &Value) -> Result<Comic> {
+    let name = string_field(value, &["name"]).ok_or_else(|| anyhow!("favorite is missing name"))?;
+    let location = string_field(value, &["location"]).unwrap_or_else(|| name.clone());
+    let uri = string_field(value, &["uri"]).ok_or_else(|| anyhow!("favorite is missing uri"))?;
+    let domain = string_field(value, &["domain"]);
 
-    favorite.id =
-        string_field(value, &["id", "uuid", "favoriteId"]).unwrap_or_else(|| favorite.stable_id());
-    favorite.author = string_field(value, &["author", "artist"]);
-    favorite.tags = tags_field(value);
-    favorite.favorited_at = string_field(value, &["favoritedAt", "favoriteTime", "createdAt"]);
-
-    Ok(favorite)
+    Ok(Comic::from_mangacon_favorite(
+        name,
+        location,
+        uri,
+        domain.as_deref(),
+        tags_field(value),
+    ))
 }
 
 fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
@@ -81,26 +81,51 @@ mod tests {
         {
           "favorites": [
             {
-              "id": "mc-1",
-              "title": "孤独摇滚",
-              "author": "はまじあき",
-              "url": "https://mangacon.example/bocchi",
-              "tags": ["音乐", "日常"],
-              "favoriteTime": "2026-05-28T18:46:24Z"
+              "location": "渴盼已久的惡役千金(Last boss)的身體終於到手了！",
+              "name": "渴盼已久的惡役千金(Last boss)的身體終於到手了！",
+              "tags": ["羽田遼亮"],
+              "uri": "cp:kepanyijiudeeyiqianjinlastbossdeshentizhongyudaosh",
+              "domain": "www.2025copy.com"
             }
           ]
         }
         "#;
 
-        let favorites = import_mangacon_favorites_from_str(raw).expect("favorites import");
+        let comics = import_mangacon_favorites_from_str(raw).expect("favorites import");
 
-        assert_eq!(favorites.len(), 1);
-        assert_eq!(favorites[0].id, "mc-1");
-        assert_eq!(favorites[0].title, "孤独摇滚");
-        assert_eq!(favorites[0].tags, vec!["音乐", "日常"]);
+        assert_eq!(comics.len(), 1);
         assert_eq!(
-            favorites[0].source_url.as_deref(),
-            Some("https://mangacon.example/bocchi")
+            comics[0].id,
+            "cp:kepanyijiudeeyiqianjinlastbossdeshentizhongyudaosh"
         );
+        assert_eq!(
+            comics[0].source_uri,
+            "cp:kepanyijiudeeyiqianjinlastbossdeshentizhongyudaosh"
+        );
+        assert_eq!(comics[0].source_scheme.as_deref(), Some("cp"));
+        assert_eq!(comics[0].source_domain.as_deref(), Some("www.2025copy.com"));
+        assert_eq!(comics[0].tags, vec!["羽田遼亮"]);
+        assert_eq!(
+            comics[0].location,
+            "渴盼已久的惡役千金(Last boss)的身體終於到手了！"
+        );
+    }
+
+    #[test]
+    fn imports_real_mangacon_file_when_available() {
+        let path = std::path::Path::new("E:\\漫画控\\20260528184624.mc3db.json");
+        if !path.exists() {
+            eprintln!("skipping real MangaCon import test: fixture file is not present");
+            return;
+        }
+
+        let comics = import_mangacon_favorites(path).expect("real MangaCon import");
+
+        assert_eq!(comics.len(), 447);
+        assert!(!comics[0].source_uri.is_empty());
+        assert!(comics[0]
+            .source_scheme
+            .as_deref()
+            .is_some_and(|scheme| !scheme.is_empty()));
     }
 }
