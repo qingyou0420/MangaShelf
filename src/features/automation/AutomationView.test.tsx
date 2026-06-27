@@ -54,6 +54,27 @@ describe("AutomationView", () => {
           { x: 360, y: 96 },
         ],
       }),
+      scanFavoritesUpdates: async () => ({
+        window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+        width: 850,
+        height: 600,
+        badges: [
+          { x: 174, y: 96 },
+          { x: 374, y: 296 },
+          { x: 574, y: 96 },
+        ],
+        pages: [
+          { scrollAttempts: 0, badges: [{ x: 174, y: 96 }] },
+          {
+            scrollAttempts: 2,
+            badges: [
+              { x: 374, y: 296 },
+              { x: 574, y: 96 },
+            ],
+          },
+        ],
+        scrollAttempts: 2,
+      }),
       openFavorites: async () => ({
         window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
         clicked: { x: 212, y: 330 },
@@ -123,6 +144,12 @@ describe("AutomationView", () => {
 
     expect(await screen.findByText("截图 850x600")).toBeInTheDocument();
     expect(screen.getByText("识别红点 2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "滚动扫描收藏更新" }));
+
+    expect(await screen.findByText("收藏红点 3")).toBeInTheDocument();
+    expect(screen.getByText("收藏页数 2")).toBeInTheDocument();
+    expect(screen.getByText("收藏滚动 2 次")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "打开收藏夹" }));
 

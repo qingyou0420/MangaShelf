@@ -17,6 +17,9 @@ const BADGE_TO_CARD_CENTER_Y_OFFSET: i32 = 76;
 const DETAIL_BADGE_TO_CHAPTER_BUTTON_X_OFFSET: i32 = 52;
 const DETAIL_SCAN_MAX_SCROLLS: u32 = 8;
 const DETAIL_SCAN_SCROLL_NOTCHES: i32 = 6;
+const FAVORITES_SCAN_MAX_SCROLLS: u32 = 48;
+const FAVORITES_SCAN_SCROLL_NOTCHES: i32 = 6;
+const FAVORITES_SCAN_RESET_NOTCHES: i32 = 360;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +56,24 @@ pub struct DetailUpdateScanResult {
     pub width: u32,
     pub height: u32,
     pub badges: Vec<BadgePoint>,
+    pub scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoritesUpdateScanPage {
+    pub scroll_attempts: u32,
+    pub badges: Vec<BadgePoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoritesUpdateScanResult {
+    pub window: MangaConWindow,
+    pub width: u32,
+    pub height: u32,
+    pub badges: Vec<BadgePoint>,
+    pub pages: Vec<FavoritesUpdateScanPage>,
     pub scroll_attempts: u32,
 }
 
@@ -121,6 +142,53 @@ pub fn open_first_badged_comic_from_favorites() -> Result<OpenComicResult, Navig
     })
 }
 
+pub fn scan_favorites_updates_with_scroll() -> Result<FavoritesUpdateScanResult, NavigationError> {
+    let mut scan = scan_mangacon_badges()?;
+    scroll_window_up(scan.window.hwnd, FAVORITES_SCAN_RESET_NOTCHES)?;
+    std::thread::sleep(std::time::Duration::from_millis(650));
+
+    scan = scan_mangacon_badges()?;
+    let mut samples = vec![FavoritesScrollScanSample::new(
+        0,
+        scan.fingerprint,
+        scan.badges.clone(),
+    )];
+    let mut previous_fingerprint = scan.fingerprint;
+    let mut unchanged_viewports = 0;
+
+    for scroll_attempts in 1..=FAVORITES_SCAN_MAX_SCROLLS {
+        scroll_window_down(scan.window.hwnd, FAVORITES_SCAN_SCROLL_NOTCHES)?;
+        std::thread::sleep(std::time::Duration::from_millis(420));
+        scan = scan_mangacon_badges()?;
+        if scan.fingerprint == previous_fingerprint {
+            unchanged_viewports += 1;
+        } else {
+            previous_fingerprint = scan.fingerprint;
+            unchanged_viewports = 0;
+        }
+
+        samples.push(FavoritesScrollScanSample::new(
+            scroll_attempts,
+            scan.fingerprint,
+            scan.badges.clone(),
+        ));
+
+        if unchanged_viewports >= 2 {
+            break;
+        }
+    }
+
+    let summary = favorites_scroll_scan_summary_from_samples(samples);
+    Ok(FavoritesUpdateScanResult {
+        window: scan.window,
+        width: scan.width,
+        height: scan.height,
+        badges: summary.badges,
+        pages: summary.pages,
+        scroll_attempts: summary.scroll_attempts,
+    })
+}
+
 pub fn scan_detail_updates_with_scroll() -> Result<DetailUpdateScanResult, NavigationError> {
     let mut scan = scan_mangacon_detail_chapter_badges()?;
     if !scan.badges.is_empty() {
@@ -176,6 +244,63 @@ pub fn trigger_first_detail_update_download() -> Result<TriggerDetailDownloadRes
         remaining_badges: after_scan.badges,
         scroll_attempts: scan.scroll_attempts,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FavoritesScrollScanSummary {
+    badges: Vec<BadgePoint>,
+    pages: Vec<FavoritesUpdateScanPage>,
+    scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FavoritesScrollScanSample {
+    scroll_attempts: u32,
+    fingerprint: u64,
+    badges: Vec<BadgePoint>,
+}
+
+impl FavoritesScrollScanSample {
+    fn new(scroll_attempts: u32, fingerprint: u64, badges: Vec<BadgePoint>) -> Self {
+        Self {
+            scroll_attempts,
+            fingerprint,
+            badges,
+        }
+    }
+}
+
+fn favorites_scroll_scan_summary_from_samples(
+    samples: Vec<FavoritesScrollScanSample>,
+) -> FavoritesScrollScanSummary {
+    let scroll_attempts = samples
+        .last()
+        .map(|sample| sample.scroll_attempts)
+        .unwrap_or(0);
+    let mut previous_fingerprint = None;
+    let mut pages = Vec::new();
+    for sample in samples {
+        if previous_fingerprint == Some(sample.fingerprint) {
+            continue;
+        }
+        previous_fingerprint = Some(sample.fingerprint);
+        if !sample.badges.is_empty() {
+            pages.push(FavoritesUpdateScanPage {
+                scroll_attempts: sample.scroll_attempts,
+                badges: sample.badges,
+            });
+        }
+    }
+    let badges = pages
+        .iter()
+        .flat_map(|page| page.badges.iter().copied())
+        .collect::<Vec<_>>();
+
+    FavoritesScrollScanSummary {
+        badges,
+        pages,
+        scroll_attempts,
+    }
 }
 
 fn comic_card_point_from_badge(badge: BadgePoint) -> WindowPoint {
@@ -359,8 +484,25 @@ fn scroll_window_down(_hwnd: isize, _notches: i32) -> Result<(), NavigationError
     ))
 }
 
+#[cfg(not(windows))]
+fn scroll_window_up(_hwnd: isize, _notches: i32) -> Result<(), NavigationError> {
+    Err(NavigationError::ClickFailed(
+        "仅 Windows 桌面版支持窗口滚动".to_string(),
+    ))
+}
+
 #[cfg(windows)]
 fn scroll_window_down(hwnd: isize, notches: i32) -> Result<(), NavigationError> {
+    scroll_window_by_delta(hwnd, -120 * notches)
+}
+
+#[cfg(windows)]
+fn scroll_window_up(hwnd: isize, notches: i32) -> Result<(), NavigationError> {
+    scroll_window_by_delta(hwnd, 120 * notches)
+}
+
+#[cfg(windows)]
+fn scroll_window_by_delta(hwnd: isize, wheel_delta: i32) -> Result<(), NavigationError> {
     use std::ffi::c_void;
     use windows::Win32::{
         Foundation::{HWND, RECT},
@@ -393,7 +535,7 @@ fn scroll_window_down(hwnd: isize, notches: i32) -> Result<(), NavigationError> 
         SetCursorPos(center.x, center.y)
             .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
         std::thread::sleep(std::time::Duration::from_millis(60));
-        mouse_event(MOUSEEVENTF_WHEEL, 0, 0, -120 * notches, 0);
+        mouse_event(MOUSEEVENTF_WHEEL, 0, 0, wheel_delta, 0);
     }
 
     Ok(())
@@ -480,6 +622,49 @@ mod tests {
     }
 
     #[test]
+    fn favorites_scroll_scan_summary_keeps_badged_pages_and_flattened_badges() {
+        let summary = favorites_scroll_scan_summary_from_samples(vec![
+            FavoritesScrollScanSample::new(0, 100, Vec::new()),
+            FavoritesScrollScanSample::new(1, 101, vec![BadgePoint { x: 174, y: 96 }]),
+            FavoritesScrollScanSample::new(
+                2,
+                102,
+                vec![BadgePoint { x: 374, y: 296 }, BadgePoint { x: 574, y: 96 }],
+            ),
+        ]);
+
+        assert_eq!(summary.scroll_attempts, 2);
+        assert_eq!(
+            summary.badges,
+            vec![
+                BadgePoint { x: 174, y: 96 },
+                BadgePoint { x: 374, y: 296 },
+                BadgePoint { x: 574, y: 96 },
+            ]
+        );
+        assert_eq!(summary.pages.len(), 2);
+        assert_eq!(summary.pages[0].scroll_attempts, 1);
+        assert_eq!(summary.pages[1].scroll_attempts, 2);
+    }
+
+    #[test]
+    fn favorites_scroll_scan_summary_ignores_unchanged_viewport_repeats() {
+        let summary = favorites_scroll_scan_summary_from_samples(vec![
+            FavoritesScrollScanSample::new(0, 100, vec![BadgePoint { x: 174, y: 96 }]),
+            FavoritesScrollScanSample::new(1, 200, vec![BadgePoint { x: 374, y: 296 }]),
+            FavoritesScrollScanSample::new(2, 200, vec![BadgePoint { x: 374, y: 296 }]),
+            FavoritesScrollScanSample::new(3, 200, vec![BadgePoint { x: 374, y: 296 }]),
+        ]);
+
+        assert_eq!(summary.scroll_attempts, 3);
+        assert_eq!(
+            summary.badges,
+            vec![BadgePoint { x: 174, y: 96 }, BadgePoint { x: 374, y: 296 }]
+        );
+        assert_eq!(summary.pages.len(), 2);
+    }
+
+    #[test]
     #[ignore = "requires MangaCon.exe on home screen"]
     fn manual_opens_favorites_from_home() {
         let result = open_favorites_from_home().expect("open favorites");
@@ -508,6 +693,23 @@ mod tests {
         println!(
             "badge {:?}, clicked {:?}, scanned {}x{}, remaining badges: {:?}",
             result.badge, result.clicked, result.width, result.height, result.remaining_badges
+        );
+    }
+
+    #[test]
+    #[ignore = "requires MangaCon.exe already on favorites page"]
+    fn manual_scans_favorites_update_badges_with_scroll() {
+        let result = scan_favorites_updates_with_scroll().expect("scan favorites updates");
+
+        assert!(result.width > 300, "unexpected width: {}", result.width);
+        assert!(result.height > 200, "unexpected height: {}", result.height);
+        println!(
+            "scrolled {}, scanned {}x{}, pages: {}, favorites badges: {:?}",
+            result.scroll_attempts,
+            result.width,
+            result.height,
+            result.pages.len(),
+            result.badges
         );
     }
 

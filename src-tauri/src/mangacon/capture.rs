@@ -24,6 +24,7 @@ pub struct MangaConBadgeScanResult {
     pub width: u32,
     pub height: u32,
     pub badges: Vec<BadgePoint>,
+    pub fingerprint: u64,
 }
 
 #[derive(Debug, Error)]
@@ -71,6 +72,7 @@ pub fn scan_mangacon_badges() -> Result<MangaConBadgeScanResult, WindowCaptureEr
             width: image.width,
             height: image.height,
             badges: sample.badges,
+            fingerprint: rgba_fingerprint(image.width, image.height, &image.rgba),
         };
 
         let current_area = u64::from(scan.width) * u64::from(scan.height);
@@ -108,6 +110,7 @@ pub fn scan_mangacon_detail_chapter_badges() -> Result<MangaConBadgeScanResult, 
             width: image.width,
             height: image.height,
             badges: sample.badges,
+            fingerprint: rgba_fingerprint(image.width, image.height, &image.rgba),
         };
 
         let current_area = u64::from(scan.width) * u64::from(scan.height);
@@ -275,6 +278,20 @@ fn bgra_to_rgba(mut pixels: Vec<u8>) -> Vec<u8> {
         pixel.swap(0, 2);
     }
     pixels
+}
+
+fn rgba_fingerprint(width: u32, height: u32, rgba: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in width
+        .to_le_bytes()
+        .into_iter()
+        .chain(height.to_le_bytes())
+        .chain(rgba.iter().copied())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]

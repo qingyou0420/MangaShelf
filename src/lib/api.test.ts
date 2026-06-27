@@ -8,6 +8,7 @@ import {
   openMangaConFavorites,
   restartMangaCon,
   scanDetailUpdates,
+  scanFavoritesUpdates,
   scanMangaConBadges,
   triggerFirstDetailUpdateDownload,
 } from "./api";
@@ -174,6 +175,38 @@ describe("importFavorites", () => {
     expect(result).toMatchObject({
       badges: [{ x: 142, y: 516 }],
       scrollAttempts: 3,
+    });
+  });
+
+  it("封装滚动扫描收藏夹更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+      width: 850,
+      height: 600,
+      badges: [
+        { x: 174, y: 96 },
+        { x: 374, y: 296 },
+      ],
+      pages: [
+        { scrollAttempts: 0, badges: [{ x: 174, y: 96 }] },
+        { scrollAttempts: 2, badges: [{ x: 374, y: 296 }] },
+      ],
+      scrollAttempts: 2,
+    });
+
+    const result = await scanFavoritesUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("scan_favorites_updates");
+    expect(result).toMatchObject({
+      badges: [
+        { x: 174, y: 96 },
+        { x: 374, y: 296 },
+      ],
+      pages: [
+        { scrollAttempts: 0, badges: [{ x: 174, y: 96 }] },
+        { scrollAttempts: 2, badges: [{ x: 374, y: 296 }] },
+      ],
+      scrollAttempts: 2,
     });
   });
 

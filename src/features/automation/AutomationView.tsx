@@ -19,6 +19,7 @@ import {
   openMangaConFavorites,
   restartMangaCon,
   scanDetailUpdates,
+  scanFavoritesUpdates,
   scanMangaConBadges,
   triggerFirstDetailUpdateDownload,
 } from "../../lib/api";
@@ -26,6 +27,7 @@ import type {
   AutomationRunStatus,
   CompanionPaths,
   DetailUpdateScanResult,
+  FavoritesUpdateScanResult,
   LaunchMangaConResult,
   MangaConBadgeScanResult,
   MangaConWindow,
@@ -61,6 +63,7 @@ export interface AutomationService {
   restart: (executablePath: string) => Promise<LaunchMangaConResult>;
   getStatus: () => Promise<AutomationRunStatus>;
   scanBadges: () => Promise<MangaConBadgeScanResult>;
+  scanFavoritesUpdates: () => Promise<FavoritesUpdateScanResult>;
   openFavorites: () => Promise<OpenFavoritesResult>;
   openFirstUpdatedComic: () => Promise<OpenComicResult>;
   scanDetailUpdates: () => Promise<DetailUpdateScanResult>;
@@ -73,6 +76,7 @@ const defaultAutomationService: AutomationService = {
   restart: (executablePath) => restartMangaCon({ executablePath }),
   getStatus: getAutomationStatus,
   scanBadges: scanMangaConBadges,
+  scanFavoritesUpdates,
   openFavorites: openMangaConFavorites,
   openFirstUpdatedComic,
   scanDetailUpdates,
@@ -88,6 +92,8 @@ export function AutomationView({
   const [windows, setWindows] = useState<MangaConWindow[]>([]);
   const [launchResult, setLaunchResult] = useState<LaunchMangaConResult>();
   const [badgeScan, setBadgeScan] = useState<MangaConBadgeScanResult>();
+  const [favoritesUpdateScan, setFavoritesUpdateScan] =
+    useState<FavoritesUpdateScanResult>();
   const [openResult, setOpenResult] = useState<OpenFavoritesResult>();
   const [openComicResult, setOpenComicResult] = useState<OpenComicResult>();
   const [detailUpdateScan, setDetailUpdateScan] = useState<DetailUpdateScanResult>();
@@ -135,6 +141,7 @@ export function AutomationView({
       const result = await service.restart(paths.mangaConExecutable);
       setLaunchResult(result);
       setBadgeScan(undefined);
+      setFavoritesUpdateScan(undefined);
       setOpenResult(undefined);
       setOpenComicResult(undefined);
       setDetailUpdateScan(undefined);
@@ -157,6 +164,15 @@ export function AutomationView({
       setBadgeScan(result);
       setWindows([result.window]);
       setMessage("截图识别完成");
+    });
+  }
+
+  function handleScanFavoritesUpdates() {
+    void runAction("favorites-updates", async () => {
+      const result = await service.scanFavoritesUpdates();
+      setFavoritesUpdateScan(result);
+      setWindows([result.window]);
+      setMessage("收藏夹滚动扫描完成");
     });
   }
 
@@ -309,6 +325,15 @@ export function AutomationView({
           <button
             className="secondary-action"
             type="button"
+            onClick={handleScanFavoritesUpdates}
+            disabled={busyAction === "favorites-updates"}
+          >
+            <ScanSearch size={16} aria-hidden="true" />
+            滚动扫描收藏更新
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
             onClick={handleOpenFirstUpdatedComic}
             disabled={busyAction === "open-first-updated"}
           >
@@ -358,6 +383,22 @@ export function AutomationView({
               <div>
                 <dt>红点结果</dt>
                 <dd>识别红点 {badgeScan.badges.length}</dd>
+              </div>
+            </>
+          )}
+          {favoritesUpdateScan && (
+            <>
+              <div>
+                <dt>收藏红点</dt>
+                <dd>收藏红点 {favoritesUpdateScan.badges.length}</dd>
+              </div>
+              <div>
+                <dt>收藏页数</dt>
+                <dd>收藏页数 {favoritesUpdateScan.pages.length}</dd>
+              </div>
+              <div>
+                <dt>收藏滚动</dt>
+                <dd>收藏滚动 {favoritesUpdateScan.scrollAttempts} 次</dd>
               </div>
             </>
           )}

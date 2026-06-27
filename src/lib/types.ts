@@ -79,6 +79,20 @@ export interface DetailUpdateScanResult {
   scrollAttempts: number;
 }
 
+export interface FavoritesUpdateScanPage {
+  scrollAttempts: number;
+  badges: BadgePoint[];
+}
+
+export interface FavoritesUpdateScanResult {
+  window: MangaConWindow;
+  width: number;
+  height: number;
+  badges: BadgePoint[];
+  pages: FavoritesUpdateScanPage[];
+  scrollAttempts: number;
+}
+
 export interface TriggerDetailDownloadResult {
   window: MangaConWindow;
   badge: BadgePoint;

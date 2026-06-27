@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AutomationRunStatus,
   DetailUpdateScanResult,
+  FavoritesUpdateScanResult,
   ImportFavoritesResult,
   LaunchMangaConResult,
   MangaConBadgeScanResult,
@@ -71,6 +72,10 @@ export function openFirstUpdatedComic(): Promise<OpenComicResult> {
 
 export function scanDetailUpdates(): Promise<DetailUpdateScanResult> {
   return invoke<DetailUpdateScanResult>("scan_detail_updates");
+}
+
+export function scanFavoritesUpdates(): Promise<FavoritesUpdateScanResult> {
+  return invoke<FavoritesUpdateScanResult>("scan_favorites_updates");
 }
 
 export function triggerFirstDetailUpdateDownload(): Promise<TriggerDetailDownloadResult> {
