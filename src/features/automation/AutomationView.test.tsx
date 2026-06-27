@@ -44,6 +44,15 @@ describe("AutomationView", () => {
         detectedBadges: 5,
         stableSamples: 4,
       }),
+      scanBadges: async () => ({
+        window: { hwnd: 1001, title: "漫画控 v3.0.15.58 Beta4" },
+        width: 850,
+        height: 600,
+        badges: [
+          { x: 164, y: 96 },
+          { x: 360, y: 96 },
+        ],
+      }),
     };
 
     render(
@@ -72,5 +81,10 @@ describe("AutomationView", () => {
 
     expect(await screen.findByText("红点 5")).toBeInTheDocument();
     expect(screen.getByText("稳定样本 4")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "识别红点" }));
+
+    expect(await screen.findByText("截图 850x600")).toBeInTheDocument();
+    expect(screen.getByText("识别红点 2")).toBeInTheDocument();
   });
 });

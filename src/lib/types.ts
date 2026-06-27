@@ -37,6 +37,18 @@ export interface MangaConWindow {
   title: string;
 }
 
+export interface BadgePoint {
+  x: number;
+  y: number;
+}
+
+export interface MangaConBadgeScanResult {
+  window: MangaConWindow;
+  width: number;
+  height: number;
+  badges: BadgePoint[];
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }

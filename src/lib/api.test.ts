@@ -4,6 +4,7 @@ import {
   getAutomationStatus,
   importFavorites,
   launchMangaCon,
+  scanMangaConBadges,
 } from "./api";
 
 const { invokeMock } = vi.hoisted(() => ({
@@ -82,5 +83,23 @@ describe("importFavorites", () => {
       executablePath: "E:\\漫画控\\MangaCon.exe",
     });
     expect(invokeMock).toHaveBeenCalledWith("get_automation_status");
+  });
+
+  it("封装漫画控截图红点识别 command", async () => {
+    invokeMock.mockResolvedValue({
+      window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+      width: 850,
+      height: 600,
+      badges: [{ x: 164, y: 96 }],
+    });
+
+    const result = await scanMangaConBadges();
+
+    expect(invokeMock).toHaveBeenCalledWith("scan_mangacon_badges");
+    expect(result).toMatchObject({
+      width: 850,
+      height: 600,
+      badges: [{ x: 164, y: 96 }],
+    });
   });
 });

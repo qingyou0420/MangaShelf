@@ -5,6 +5,7 @@ import {
   MonitorDot,
   PlayCircle,
   RefreshCw,
+  ScanSearch,
   Search,
 } from "lucide-react";
 import { useState } from "react";
@@ -12,11 +13,13 @@ import {
   findMangaConWindows,
   getAutomationStatus,
   launchMangaCon,
+  scanMangaConBadges,
 } from "../../lib/api";
 import type {
   AutomationRunStatus,
   CompanionPaths,
   LaunchMangaConResult,
+  MangaConBadgeScanResult,
   MangaConWindow,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
@@ -45,12 +48,14 @@ export interface AutomationService {
   findWindows: () => Promise<MangaConWindow[]>;
   launch: (executablePath: string) => Promise<LaunchMangaConResult>;
   getStatus: () => Promise<AutomationRunStatus>;
+  scanBadges: () => Promise<MangaConBadgeScanResult>;
 }
 
 const defaultAutomationService: AutomationService = {
   findWindows: findMangaConWindows,
   launch: (executablePath) => launchMangaCon({ executablePath }),
   getStatus: getAutomationStatus,
+  scanBadges: scanMangaConBadges,
 };
 
 export function AutomationView({
@@ -61,6 +66,7 @@ export function AutomationView({
   const [currentStatus, setCurrentStatus] = useState(status);
   const [windows, setWindows] = useState<MangaConWindow[]>([]);
   const [launchResult, setLaunchResult] = useState<LaunchMangaConResult>();
+  const [badgeScan, setBadgeScan] = useState<MangaConBadgeScanResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -102,6 +108,15 @@ export function AutomationView({
     void runAction("status", async () => {
       setCurrentStatus(await service.getStatus());
       setMessage("自动化状态已刷新");
+    });
+  }
+
+  function handleScanBadges() {
+    void runAction("scan", async () => {
+      const result = await service.scanBadges();
+      setBadgeScan(result);
+      setWindows([result.window]);
+      setMessage("截图识别完成");
     });
   }
 
@@ -187,6 +202,15 @@ export function AutomationView({
             <RefreshCw size={16} aria-hidden="true" />
             刷新状态
           </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleScanBadges}
+            disabled={busyAction === "scan"}
+          >
+            <ScanSearch size={16} aria-hidden="true" />
+            识别红点
+          </button>
         </div>
         <dl className="link-state">
           <div>
@@ -202,6 +226,18 @@ export function AutomationView({
               <dt>最近启动</dt>
               <dd>已启动 PID {launchResult.pid}</dd>
             </div>
+          )}
+          {badgeScan && (
+            <>
+              <div>
+                <dt>截图尺寸</dt>
+                <dd>截图 {badgeScan.width}x{badgeScan.height}</dd>
+              </div>
+              <div>
+                <dt>红点结果</dt>
+                <dd>识别红点 {badgeScan.badges.length}</dd>
+              </div>
+            </>
           )}
           {error && (
             <div>

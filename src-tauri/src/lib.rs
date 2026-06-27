@@ -14,6 +14,7 @@ use crate::{
     domain::ImportSummary,
     favorites::import_mangacon_favorites,
     mangacon::{
+        capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
         process::{launch_mangacon as launch_mangacon_process, LaunchResult},
         window::MangaConWindow,
     },
@@ -49,6 +50,11 @@ fn launch_mangacon(executable_path: String) -> Result<LaunchResult, String> {
 #[tauri::command]
 fn get_automation_status() -> AutomationRunStatus {
     AutomationRunStatus::waiting_refresh(0, 0)
+}
+
+#[tauri::command]
+fn scan_mangacon_badges() -> Result<MangaConBadgeScanResult, String> {
+    scan_mangacon_badges_inner().map_err(|err| err.to_string())
 }
 
 fn import_favorites_inner(
@@ -101,7 +107,8 @@ pub fn run() {
             import_favorites,
             find_mangacon_windows,
             launch_mangacon,
-            get_automation_status
+            get_automation_status,
+            scan_mangacon_badges
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

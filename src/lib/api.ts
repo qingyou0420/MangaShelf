@@ -3,6 +3,7 @@ import type {
   AutomationRunStatus,
   ImportFavoritesResult,
   LaunchMangaConResult,
+  MangaConBadgeScanResult,
   MangaConWindow,
 } from "./types";
 
@@ -42,4 +43,8 @@ export function launchMangaCon(
 
 export function getAutomationStatus(): Promise<AutomationRunStatus> {
   return invoke<AutomationRunStatus>("get_automation_status");
+}
+
+export function scanMangaConBadges(): Promise<MangaConBadgeScanResult> {
+  return invoke<MangaConBadgeScanResult>("scan_mangacon_badges");
 }
