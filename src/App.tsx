@@ -1,49 +1,84 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { useMemo, useState } from "react";
+import {
+  BookOpen,
+  Bot,
+  Gauge,
+  Library,
+  MonitorCog,
+  Settings,
+} from "lucide-react";
 import "./App.css";
+import { AutomationView } from "./features/automation/AutomationView";
+import { Dashboard } from "./features/dashboard/Dashboard";
+import { LibraryView } from "./features/library/LibraryView";
+import { ReaderView } from "./features/reader/ReaderView";
+import { SettingsView } from "./features/settings/SettingsView";
+import { approvedDefaultPaths, sampleFavorite } from "./test/fixtures";
+
+type AppSection = "dashboard" | "library" | "automation" | "reader" | "settings";
+
+const navigation: Array<{
+  id: AppSection;
+  label: string;
+  icon: typeof Gauge;
+}> = [
+  { id: "dashboard", label: "仪表盘", icon: Gauge },
+  { id: "library", label: "书库", icon: Library },
+  { id: "automation", label: "自动化", icon: Bot },
+  { id: "reader", label: "阅读器", icon: BookOpen },
+  { id: "settings", label: "设置", icon: Settings },
+];
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const [activeSection, setActiveSection] = useState<AppSection>("dashboard");
+  const favorites = useMemo(() => [sampleFavorite], []);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <main className="app-shell">
+      <aside className="sidebar" aria-label="主导航">
+        <div className="brand-block">
+          <div className="brand-icon">
+            <MonitorCog size={22} aria-hidden="true" />
+          </div>
+          <div>
+            <strong>漫画控伴侣</strong>
+            <span>Windows 本地工具</span>
+          </div>
+        </div>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+        <nav className="nav-list">
+          {navigation.map(({ id, label, icon: Icon }) => (
+            <button
+              className={activeSection === id ? "nav-item active" : "nav-item"}
+              type="button"
+              key={id}
+              onClick={() => setActiveSection(id)}
+            >
+              <Icon size={18} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+        <div className="sidebar-footer">
+          <span>状态</span>
+          <strong>本地预览</strong>
+        </div>
+      </aside>
+
+      <section className="content-shell">
+        {activeSection === "dashboard" && (
+          <Dashboard
+            paths={approvedDefaultPaths}
+            favorites={favorites}
+            pendingTasks={3}
+          />
+        )}
+        {activeSection === "library" && <LibraryView favorites={favorites} />}
+        {activeSection === "automation" && <AutomationView />}
+        {activeSection === "reader" && <ReaderView />}
+        {activeSection === "settings" && <SettingsView paths={approvedDefaultPaths} />}
+      </section>
     </main>
   );
 }
