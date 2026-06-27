@@ -22,6 +22,7 @@ import {
   scanFavoritesUpdates,
   scanMangaConBadges,
   triggerFirstDetailUpdateDownload,
+  triggerNextFavoriteUpdateDownload,
 } from "../../lib/api";
 import type {
   AutomationRunStatus,
@@ -34,6 +35,7 @@ import type {
   OpenComicResult,
   OpenFavoritesResult,
   TriggerDetailDownloadResult,
+  TriggerNextFavoriteUpdateDownloadResult,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
 
@@ -68,6 +70,7 @@ export interface AutomationService {
   openFirstUpdatedComic: () => Promise<OpenComicResult>;
   scanDetailUpdates: () => Promise<DetailUpdateScanResult>;
   triggerFirstDetailUpdateDownload: () => Promise<TriggerDetailDownloadResult>;
+  triggerNextFavoriteUpdateDownload: () => Promise<TriggerNextFavoriteUpdateDownloadResult>;
 }
 
 const defaultAutomationService: AutomationService = {
@@ -81,6 +84,7 @@ const defaultAutomationService: AutomationService = {
   openFirstUpdatedComic,
   scanDetailUpdates,
   triggerFirstDetailUpdateDownload,
+  triggerNextFavoriteUpdateDownload,
 };
 
 export function AutomationView({
@@ -99,6 +103,8 @@ export function AutomationView({
   const [detailUpdateScan, setDetailUpdateScan] = useState<DetailUpdateScanResult>();
   const [triggerDownloadResult, setTriggerDownloadResult] =
     useState<TriggerDetailDownloadResult>();
+  const [nextFavoriteUpdateResult, setNextFavoriteUpdateResult] =
+    useState<TriggerNextFavoriteUpdateDownloadResult>();
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
@@ -146,6 +152,7 @@ export function AutomationView({
       setOpenComicResult(undefined);
       setDetailUpdateScan(undefined);
       setTriggerDownloadResult(undefined);
+      setNextFavoriteUpdateResult(undefined);
       setMessage("漫画控已重启，等待刷新红点");
       setWindows(await service.findWindows());
     });
@@ -210,6 +217,15 @@ export function AutomationView({
       setTriggerDownloadResult(result);
       setWindows([result.window]);
       setMessage("首个章节更新已交给漫画控");
+    });
+  }
+
+  function handleTriggerNextFavoriteUpdateDownload() {
+    void runAction("trigger-next-favorite-update", async () => {
+      const result = await service.triggerNextFavoriteUpdateDownload();
+      setNextFavoriteUpdateResult(result);
+      setWindows([result.download.window]);
+      setMessage("下一个收藏更新已交给漫画控");
     });
   }
 
@@ -358,6 +374,15 @@ export function AutomationView({
             <MousePointerClick size={16} aria-hidden="true" />
             下载首个章节更新
           </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={handleTriggerNextFavoriteUpdateDownload}
+            disabled={busyAction === "trigger-next-favorite-update"}
+          >
+            <MousePointerClick size={16} aria-hidden="true" />
+            处理下一个收藏更新
+          </button>
         </div>
         <dl className="link-state">
           <div>
@@ -445,6 +470,30 @@ export function AutomationView({
               <div>
                 <dt>剩余章节红点</dt>
                 <dd>剩余章节红点 {triggerDownloadResult.remainingBadges.length}</dd>
+              </div>
+            </>
+          )}
+          {nextFavoriteUpdateResult && (
+            <>
+              <div>
+                <dt>收藏点击</dt>
+                <dd>
+                  收藏点击 {nextFavoriteUpdateResult.comic.clicked.x},
+                  {nextFavoriteUpdateResult.comic.clicked.y}
+                </dd>
+              </div>
+              <div>
+                <dt>收藏滚动定位</dt>
+                <dd>
+                  收藏滚动定位 {nextFavoriteUpdateResult.comic.scrollAttempts} 次
+                </dd>
+              </div>
+              <div>
+                <dt>更新下载点击</dt>
+                <dd>
+                  更新下载点击 {nextFavoriteUpdateResult.download.clicked.x},
+                  {nextFavoriteUpdateResult.download.clicked.y}
+                </dd>
               </div>
             </>
           )}

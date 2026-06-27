@@ -51,6 +51,18 @@ pub struct OpenComicResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OpenScrolledComicResult {
+    pub window: MangaConWindow,
+    pub badge: BadgePoint,
+    pub clicked: WindowPoint,
+    pub width: u32,
+    pub height: u32,
+    pub remaining_badges: Vec<BadgePoint>,
+    pub scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DetailUpdateScanResult {
     pub window: MangaConWindow,
     pub width: u32,
@@ -87,6 +99,13 @@ pub struct TriggerDetailDownloadResult {
     pub height: u32,
     pub remaining_badges: Vec<BadgePoint>,
     pub scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerNextFavoriteUpdateDownloadResult {
+    pub comic: OpenScrolledComicResult,
+    pub download: TriggerDetailDownloadResult,
 }
 
 #[derive(Debug, Error)]
@@ -142,6 +161,25 @@ pub fn open_first_badged_comic_from_favorites() -> Result<OpenComicResult, Navig
     })
 }
 
+pub fn open_next_badged_comic_from_favorites() -> Result<OpenScrolledComicResult, NavigationError> {
+    let scan = scan_next_favorite_update_with_scroll()?;
+    let clicked = comic_card_point_from_badge(scan.badge);
+    foreground_click_window_point(scan.window.hwnd, clicked)?;
+
+    std::thread::sleep(std::time::Duration::from_millis(1_000));
+
+    let after_scan = scan_mangacon_badges()?;
+    Ok(OpenScrolledComicResult {
+        window: after_scan.window,
+        badge: scan.badge,
+        clicked,
+        width: after_scan.width,
+        height: after_scan.height,
+        remaining_badges: after_scan.badges,
+        scroll_attempts: scan.scroll_attempts,
+    })
+}
+
 pub fn scan_favorites_updates_with_scroll() -> Result<FavoritesUpdateScanResult, NavigationError> {
     let mut scan = scan_mangacon_badges()?;
     scroll_window_up(scan.window.hwnd, FAVORITES_SCAN_RESET_NOTCHES)?;
@@ -187,6 +225,56 @@ pub fn scan_favorites_updates_with_scroll() -> Result<FavoritesUpdateScanResult,
         pages: summary.pages,
         scroll_attempts: summary.scroll_attempts,
     })
+}
+
+pub fn scan_next_favorite_update_with_scroll(
+) -> Result<NextFavoriteUpdateScanResult, NavigationError> {
+    let mut scan = scan_mangacon_badges()?;
+    scroll_window_up(scan.window.hwnd, FAVORITES_SCAN_RESET_NOTCHES)?;
+    std::thread::sleep(std::time::Duration::from_millis(650));
+
+    scan = scan_mangacon_badges()?;
+    if let Some(target) = next_favorite_update_target(0, &scan.badges) {
+        return Ok(NextFavoriteUpdateScanResult {
+            window: scan.window,
+            width: scan.width,
+            height: scan.height,
+            badge: target.badge,
+            badges: scan.badges,
+            scroll_attempts: target.scroll_attempts,
+        });
+    }
+
+    let mut previous_fingerprint = scan.fingerprint;
+    let mut unchanged_viewports = 0;
+    for scroll_attempts in 1..=FAVORITES_SCAN_MAX_SCROLLS {
+        scroll_window_down(scan.window.hwnd, FAVORITES_SCAN_SCROLL_NOTCHES)?;
+        std::thread::sleep(std::time::Duration::from_millis(420));
+        scan = scan_mangacon_badges()?;
+
+        if let Some(target) = next_favorite_update_target(scroll_attempts, &scan.badges) {
+            return Ok(NextFavoriteUpdateScanResult {
+                window: scan.window,
+                width: scan.width,
+                height: scan.height,
+                badge: target.badge,
+                badges: scan.badges,
+                scroll_attempts: target.scroll_attempts,
+            });
+        }
+
+        if scan.fingerprint == previous_fingerprint {
+            unchanged_viewports += 1;
+        } else {
+            previous_fingerprint = scan.fingerprint;
+            unchanged_viewports = 0;
+        }
+        if unchanged_viewports >= 2 {
+            break;
+        }
+    }
+
+    Err(NavigationError::NoUpdateBadge)
 }
 
 pub fn scan_detail_updates_with_scroll() -> Result<DetailUpdateScanResult, NavigationError> {
@@ -246,10 +334,35 @@ pub fn trigger_first_detail_update_download() -> Result<TriggerDetailDownloadRes
     })
 }
 
+pub fn trigger_next_favorite_update_download(
+) -> Result<TriggerNextFavoriteUpdateDownloadResult, NavigationError> {
+    let comic = open_next_badged_comic_from_favorites()?;
+    let download = trigger_first_detail_update_download()?;
+
+    Ok(TriggerNextFavoriteUpdateDownloadResult { comic, download })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FavoritesScrollScanSummary {
     badges: Vec<BadgePoint>,
     pages: Vec<FavoritesUpdateScanPage>,
+    scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextFavoriteUpdateScanResult {
+    pub window: MangaConWindow,
+    pub width: u32,
+    pub height: u32,
+    pub badge: BadgePoint,
+    pub badges: Vec<BadgePoint>,
+    pub scroll_attempts: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NextFavoriteUpdateTarget {
+    badge: BadgePoint,
     scroll_attempts: u32,
 }
 
@@ -268,6 +381,16 @@ impl FavoritesScrollScanSample {
             badges,
         }
     }
+}
+
+fn next_favorite_update_target(
+    scroll_attempts: u32,
+    badges: &[BadgePoint],
+) -> Option<NextFavoriteUpdateTarget> {
+    first_update_badge(badges).map(|badge| NextFavoriteUpdateTarget {
+        badge,
+        scroll_attempts,
+    })
 }
 
 fn favorites_scroll_scan_summary_from_samples(
@@ -665,6 +788,26 @@ mod tests {
     }
 
     #[test]
+    fn next_favorite_update_target_keeps_scroll_attempt_and_top_left_badge() {
+        let target = next_favorite_update_target(
+            7,
+            &[
+                BadgePoint { x: 574, y: 296 },
+                BadgePoint { x: 174, y: 496 },
+                BadgePoint { x: 374, y: 96 },
+            ],
+        );
+
+        assert_eq!(
+            target,
+            Some(NextFavoriteUpdateTarget {
+                badge: BadgePoint { x: 374, y: 96 },
+                scroll_attempts: 7,
+            })
+        );
+    }
+
+    #[test]
     #[ignore = "requires MangaCon.exe on home screen"]
     fn manual_opens_favorites_from_home() {
         let result = open_favorites_from_home().expect("open favorites");
@@ -741,6 +884,34 @@ mod tests {
         println!(
             "badge {:?}, clicked {:?}, scrolled {}, remaining detail badges: {:?}",
             result.badge, result.clicked, result.scroll_attempts, result.remaining_badges
+        );
+    }
+
+    #[test]
+    #[ignore = "requires MangaCon.exe already on favorites page with update badges"]
+    fn manual_triggers_next_favorite_update_download() {
+        let result =
+            trigger_next_favorite_update_download().expect("trigger next favorite update download");
+
+        assert!(
+            result.comic.width > 300,
+            "unexpected width: {}",
+            result.comic.width
+        );
+        assert!(
+            result.download.width > 300,
+            "unexpected width: {}",
+            result.download.width
+        );
+        println!(
+            "comic badge {:?}, comic clicked {:?}, favorite scrolled {}, detail badge {:?}, detail clicked {:?}, detail scrolled {}, remaining detail badges: {:?}",
+            result.comic.badge,
+            result.comic.clicked,
+            result.comic.scroll_attempts,
+            result.download.badge,
+            result.download.clicked,
+            result.download.scroll_attempts,
+            result.download.remaining_badges
         );
     }
 }

@@ -71,6 +71,10 @@ export interface OpenComicResult {
   remainingBadges: BadgePoint[];
 }
 
+export interface OpenScrolledComicResult extends OpenComicResult {
+  scrollAttempts: number;
+}
+
 export interface DetailUpdateScanResult {
   window: MangaConWindow;
   width: number;
@@ -101,6 +105,11 @@ export interface TriggerDetailDownloadResult {
   height: number;
   remainingBadges: BadgePoint[];
   scrollAttempts: number;
+}
+
+export interface TriggerNextFavoriteUpdateDownloadResult {
+  comic: OpenScrolledComicResult;
+  download: TriggerDetailDownloadResult;
 }
 
 export interface LaunchMangaConResult {

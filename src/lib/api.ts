@@ -10,6 +10,7 @@ import type {
   OpenComicResult,
   OpenFavoritesResult,
   TriggerDetailDownloadResult,
+  TriggerNextFavoriteUpdateDownloadResult,
 } from "./types";
 
 export interface ImportFavoritesOptions {
@@ -80,4 +81,10 @@ export function scanFavoritesUpdates(): Promise<FavoritesUpdateScanResult> {
 
 export function triggerFirstDetailUpdateDownload(): Promise<TriggerDetailDownloadResult> {
   return invoke<TriggerDetailDownloadResult>("trigger_first_detail_update_download");
+}
+
+export function triggerNextFavoriteUpdateDownload(): Promise<TriggerNextFavoriteUpdateDownloadResult> {
+  return invoke<TriggerNextFavoriteUpdateDownloadResult>(
+    "trigger_next_favorite_update_download",
+  );
 }

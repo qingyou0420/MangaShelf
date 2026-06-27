@@ -11,6 +11,7 @@ import {
   scanFavoritesUpdates,
   scanMangaConBadges,
   triggerFirstDetailUpdateDownload,
+  triggerNextFavoriteUpdateDownload,
 } from "./api";
 
 const { invokeMock } = vi.hoisted(() => ({
@@ -228,6 +229,45 @@ describe("importFavorites", () => {
       badge: { x: 151, y: 516 },
       clicked: { x: 203, y: 516 },
       scrollAttempts: 0,
+    });
+  });
+
+  it("封装处理下一个收藏更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      comic: {
+        window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+        badge: { x: 174, y: 96 },
+        clicked: { x: 117, y: 172 },
+        width: 850,
+        height: 600,
+        remainingBadges: [],
+        scrollAttempts: 2,
+      },
+      download: {
+        window: { hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" },
+        badge: { x: 151, y: 516 },
+        clicked: { x: 203, y: 516 },
+        width: 850,
+        height: 600,
+        remainingBadges: [],
+        scrollAttempts: 4,
+      },
+    });
+
+    const result = await triggerNextFavoriteUpdateDownload();
+
+    expect(invokeMock).toHaveBeenCalledWith("trigger_next_favorite_update_download");
+    expect(result).toMatchObject({
+      comic: {
+        badge: { x: 174, y: 96 },
+        clicked: { x: 117, y: 172 },
+        scrollAttempts: 2,
+      },
+      download: {
+        badge: { x: 151, y: 516 },
+        clicked: { x: 203, y: 516 },
+        scrollAttempts: 4,
+      },
     });
   });
 });

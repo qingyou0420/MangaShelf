@@ -21,8 +21,10 @@ use crate::{
             scan_detail_updates_with_scroll as scan_detail_updates_inner,
             scan_favorites_updates_with_scroll as scan_favorites_updates_inner,
             trigger_first_detail_update_download as trigger_first_detail_update_download_inner,
+            trigger_next_favorite_update_download as trigger_next_favorite_update_download_inner,
             DetailUpdateScanResult, FavoritesUpdateScanResult, OpenComicResult,
             OpenFavoritesResult, TriggerDetailDownloadResult,
+            TriggerNextFavoriteUpdateDownloadResult,
         },
         process::{
             launch_mangacon as launch_mangacon_process,
@@ -99,6 +101,12 @@ fn trigger_first_detail_update_download() -> Result<TriggerDetailDownloadResult,
     trigger_first_detail_update_download_inner().map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn trigger_next_favorite_update_download() -> Result<TriggerNextFavoriteUpdateDownloadResult, String>
+{
+    trigger_next_favorite_update_download_inner().map_err(|err| err.to_string())
+}
+
 fn import_favorites_inner(
     favorites_json_path: Option<String>,
     bookshelf_root: Option<String>,
@@ -156,7 +164,8 @@ pub fn run() {
             open_first_updated_comic,
             scan_favorites_updates,
             scan_detail_updates,
-            trigger_first_detail_update_download
+            trigger_first_detail_update_download,
+            trigger_next_favorite_update_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
