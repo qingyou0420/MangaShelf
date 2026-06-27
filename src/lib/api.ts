@@ -31,6 +31,10 @@ export interface TriggerFavoriteUpdateBatchOptions {
   maxUpdates?: number;
 }
 
+export interface TriggerAllFavoriteUpdatesOptions {
+  maxComics?: number;
+}
+
 export interface TriggerDetailUpdateBatchOptions {
   maxChapters?: number;
 }
@@ -119,4 +123,12 @@ export function triggerFavoriteUpdateBatch(
       maxUpdates: options.maxUpdates,
     },
   );
+}
+
+export function triggerAllFavoriteUpdates(
+  options: TriggerAllFavoriteUpdatesOptions = {},
+): Promise<TriggerFavoriteUpdateBatchResult> {
+  return invoke<TriggerFavoriteUpdateBatchResult>("trigger_all_favorite_updates", {
+    maxComics: options.maxComics,
+  });
 }

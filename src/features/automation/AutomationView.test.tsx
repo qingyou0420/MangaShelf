@@ -252,6 +252,14 @@ describe("AutomationView", () => {
           },
         ],
       }),
+      triggerAllFavoriteUpdates: async () => ({
+        requestedLimit: 500,
+        processed: 447,
+        downloadedChapters: 520,
+        stoppedReason: "no_update_badge" as const,
+        skipped: [],
+        items: [],
+      }),
     };
 
     render(
@@ -334,5 +342,12 @@ describe("AutomationView", () => {
     expect(screen.getByText("章节下载 3")).toBeInTheDocument();
     expect(screen.getByText("跳过收藏 1")).toBeInTheDocument();
     expect(screen.getByText("停止原因 no_update_badge")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "更新全部收藏" }));
+
+    expect(await screen.findByText("全部收藏处理 447/500")).toBeInTheDocument();
+    expect(screen.getByText("全部章节下载 520")).toBeInTheDocument();
+    expect(screen.getByText("全部跳过收藏 0")).toBeInTheDocument();
+    expect(screen.getByText("全部停止原因 no_update_badge")).toBeInTheDocument();
   });
 });

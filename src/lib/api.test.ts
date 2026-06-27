@@ -10,6 +10,7 @@ import {
   scanDetailUpdates,
   scanFavoritesUpdates,
   scanMangaConBadges,
+  triggerAllFavoriteUpdates,
   triggerDetailUpdateDownloadBatch,
   triggerFirstDetailUpdateDownload,
   triggerFavoriteUpdateBatch,
@@ -445,6 +446,29 @@ describe("importFavorites", () => {
           reason: "detail_no_update_badge",
         },
       ],
+    });
+  });
+
+  it("封装全量处理收藏更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      requestedLimit: 500,
+      processed: 447,
+      downloadedChapters: 520,
+      stoppedReason: "no_update_badge",
+      skipped: [],
+      items: [],
+    });
+
+    const result = await triggerAllFavoriteUpdates({ maxComics: 500 });
+
+    expect(invokeMock).toHaveBeenCalledWith("trigger_all_favorite_updates", {
+      maxComics: 500,
+    });
+    expect(result).toMatchObject({
+      requestedLimit: 500,
+      processed: 447,
+      downloadedChapters: 520,
+      stoppedReason: "no_update_badge",
     });
   });
 });

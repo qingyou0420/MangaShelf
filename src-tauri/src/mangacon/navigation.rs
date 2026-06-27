@@ -24,6 +24,8 @@ const FAVORITES_SCAN_SCROLL_NOTCHES: i32 = 6;
 const FAVORITES_SCAN_RESET_NOTCHES: i32 = 360;
 const FAVORITE_UPDATE_BATCH_DEFAULT_LIMIT: u32 = 3;
 const FAVORITE_UPDATE_BATCH_MAX_LIMIT: u32 = 10;
+const FAVORITE_UPDATE_ALL_DEFAULT_LIMIT: u32 = 500;
+const FAVORITE_UPDATE_ALL_MAX_LIMIT: u32 = 1_000;
 const DETAIL_UPDATE_BATCH_DEFAULT_LIMIT: u32 = 20;
 const DETAIL_UPDATE_BATCH_MAX_LIMIT: u32 = 80;
 
@@ -524,6 +526,19 @@ pub fn trigger_favorite_update_batch(
     max_updates: Option<u32>,
 ) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
     let requested_limit = favorite_update_batch_limit(max_updates);
+    trigger_favorite_update_loop(requested_limit)
+}
+
+pub fn trigger_all_favorite_updates(
+    max_comics: Option<u32>,
+) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
+    let requested_limit = favorite_update_all_limit(max_comics);
+    trigger_favorite_update_loop(requested_limit)
+}
+
+fn trigger_favorite_update_loop(
+    requested_limit: u32,
+) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
     let mut items = Vec::new();
     let mut skipped = Vec::new();
     let mut attempted_targets = Vec::new();
@@ -670,6 +685,12 @@ fn favorite_update_batch_limit(max_updates: Option<u32>) -> u32 {
         .clamp(1, FAVORITE_UPDATE_BATCH_MAX_LIMIT)
 }
 
+fn favorite_update_all_limit(max_comics: Option<u32>) -> u32 {
+    max_comics
+        .unwrap_or(FAVORITE_UPDATE_ALL_DEFAULT_LIMIT)
+        .clamp(1, FAVORITE_UPDATE_ALL_MAX_LIMIT)
+}
+
 fn detail_update_batch_limit(max_chapters: Option<u32>) -> u32 {
     max_chapters
         .unwrap_or(DETAIL_UPDATE_BATCH_DEFAULT_LIMIT)
@@ -754,6 +775,15 @@ fn click_window_point(_hwnd: isize, _point: WindowPoint) -> Result<(), Navigatio
 
 #[cfg(windows)]
 fn click_window_point(hwnd: isize, point: WindowPoint) -> Result<(), NavigationError> {
+    post_click_window_point(hwnd, point, 1)
+}
+
+#[cfg(windows)]
+fn post_click_window_point(
+    hwnd: isize,
+    point: WindowPoint,
+    count: usize,
+) -> Result<(), NavigationError> {
     use std::ffi::c_void;
     use windows::Win32::{
         Foundation::{HWND, LPARAM, WPARAM},
@@ -772,12 +802,15 @@ fn click_window_point(hwnd: isize, point: WindowPoint) -> Result<(), NavigationE
     let hwnd = HWND(hwnd as *mut c_void);
 
     unsafe {
-        PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), lparam)
-            .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
-        PostMessageW(Some(hwnd), WM_LBUTTONDOWN, WPARAM(1), lparam)
-            .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
-        PostMessageW(Some(hwnd), WM_LBUTTONUP, WPARAM(0), lparam)
-            .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
+        for _ in 0..count {
+            PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), lparam)
+                .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
+            PostMessageW(Some(hwnd), WM_LBUTTONDOWN, WPARAM(1), lparam)
+                .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
+            PostMessageW(Some(hwnd), WM_LBUTTONUP, WPARAM(0), lparam)
+                .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 
     Ok(())
@@ -802,7 +835,8 @@ fn foreground_click_window_point(hwnd: isize, point: WindowPoint) -> Result<(), 
         return Err(NavigationError::ClickFailed("窗口句柄无效".to_string()));
     }
 
-    let hwnd = HWND(hwnd as *mut c_void);
+    let raw_hwnd = hwnd;
+    let hwnd = HWND(raw_hwnd as *mut c_void);
     let mut rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut rect) }
         .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
@@ -814,10 +848,12 @@ fn foreground_click_window_point(hwnd: isize, point: WindowPoint) -> Result<(), 
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     unsafe {
-        SetCursorPos(screen_point.x, screen_point.y)
-            .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        send_left_clicks(2);
+        if SetCursorPos(screen_point.x, screen_point.y).is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            send_left_clicks(2);
+        } else {
+            post_click_window_point(raw_hwnd, point, 2)?;
+        }
     }
 
     Ok(())
@@ -848,7 +884,8 @@ fn foreground_click_window_point_once(
         return Err(NavigationError::ClickFailed("窗口句柄无效".to_string()));
     }
 
-    let hwnd = HWND(hwnd as *mut c_void);
+    let raw_hwnd = hwnd;
+    let hwnd = HWND(raw_hwnd as *mut c_void);
     let mut rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut rect) }
         .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
@@ -860,10 +897,12 @@ fn foreground_click_window_point_once(
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     unsafe {
-        SetCursorPos(screen_point.x, screen_point.y)
-            .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        send_left_clicks(1);
+        if SetCursorPos(screen_point.x, screen_point.y).is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            send_left_clicks(1);
+        } else {
+            post_click_window_point(raw_hwnd, point, 1)?;
+        }
     }
 
     Ok(())
@@ -911,10 +950,12 @@ fn scroll_window_up(hwnd: isize, notches: i32) -> Result<(), NavigationError> {
 fn scroll_window_by_delta(hwnd: isize, wheel_delta: i32) -> Result<(), NavigationError> {
     use std::ffi::c_void;
     use windows::Win32::{
-        Foundation::{HWND, RECT},
+        Foundation::{HWND, LPARAM, RECT, WPARAM},
         UI::{
             Input::KeyboardAndMouse::{mouse_event, MOUSEEVENTF_WHEEL},
-            WindowsAndMessaging::{GetWindowRect, SetCursorPos, SetForegroundWindow},
+            WindowsAndMessaging::{
+                GetWindowRect, PostMessageW, SetCursorPos, SetForegroundWindow, WM_MOUSEWHEEL,
+            },
         },
     };
 
@@ -922,7 +963,8 @@ fn scroll_window_by_delta(hwnd: isize, wheel_delta: i32) -> Result<(), Navigatio
         return Err(NavigationError::ClickFailed("窗口句柄无效".to_string()));
     }
 
-    let hwnd = HWND(hwnd as *mut c_void);
+    let raw_hwnd = hwnd;
+    let hwnd = HWND(raw_hwnd as *mut c_void);
     let mut rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut rect) }
         .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
@@ -938,13 +980,27 @@ fn scroll_window_by_delta(hwnd: isize, wheel_delta: i32) -> Result<(), Navigatio
     std::thread::sleep(std::time::Duration::from_millis(160));
 
     unsafe {
-        SetCursorPos(center.x, center.y)
+        if SetCursorPos(center.x, center.y).is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, wheel_delta, 0);
+        } else {
+            let wparam = WPARAM(pack_wheel_delta_wparam(wheel_delta));
+            let lparam = LPARAM(pack_client_point(center));
+            PostMessageW(
+                Some(HWND(raw_hwnd as *mut c_void)),
+                WM_MOUSEWHEEL,
+                wparam,
+                lparam,
+            )
             .map_err(|err| NavigationError::ClickFailed(err.to_string()))?;
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        mouse_event(MOUSEEVENTF_WHEEL, 0, 0, wheel_delta, 0);
+        }
     }
 
     Ok(())
+}
+
+fn pack_wheel_delta_wparam(wheel_delta: i32) -> usize {
+    ((wheel_delta as i16 as u16 as u32) << 16) as usize
 }
 
 fn pack_client_point(point: WindowPoint) -> isize {
@@ -984,11 +1040,25 @@ mod tests {
     }
 
     #[test]
+    fn favorite_update_all_limit_covers_full_collection_and_stays_bounded() {
+        assert_eq!(favorite_update_all_limit(None), 500);
+        assert_eq!(favorite_update_all_limit(Some(0)), 1);
+        assert_eq!(favorite_update_all_limit(Some(447)), 447);
+        assert_eq!(favorite_update_all_limit(Some(2_000)), 1_000);
+    }
+
+    #[test]
     fn client_point_packs_into_lparam_low_x_high_y() {
         assert_eq!(
             pack_client_point(WindowPoint { x: 212, y: 299 }),
             19_595_476
         );
+    }
+
+    #[test]
+    fn wheel_delta_packs_into_wparam_high_word() {
+        assert_eq!(pack_wheel_delta_wparam(120), 0x0078_0000);
+        assert_eq!(pack_wheel_delta_wparam(-120), 0xff88_0000);
     }
 
     #[test]
