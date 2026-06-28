@@ -1,11 +1,12 @@
-import { BookMarked, FolderSearch, ListFilter } from "lucide-react";
+import { BookMarked, BookOpen, FolderSearch, ListFilter } from "lucide-react";
 import type { MangaConFavorite } from "../../lib/types";
 
 interface LibraryViewProps {
   favorites: MangaConFavorite[];
+  onReadFavorite?: (favorite: MangaConFavorite) => void;
 }
 
-export function LibraryView({ favorites }: LibraryViewProps) {
+export function LibraryView({ favorites, onReadFavorite }: LibraryViewProps) {
   return (
     <section className="view" aria-labelledby="library-title">
       <div className="view-header compact">
@@ -44,6 +45,17 @@ export function LibraryView({ favorites }: LibraryViewProps) {
               <small>{favorite.sourceUri}</small>
               {favorite.localPath && (
                 <small>{`本地 ${favorite.chapterCount} 章 / ${favorite.imageCount} 页`}</small>
+              )}
+              {favorite.localPath && onReadFavorite && (
+                <button
+                  className="secondary-action compact-action"
+                  type="button"
+                  aria-label={`阅读 ${favorite.name}`}
+                  onClick={() => onReadFavorite(favorite)}
+                >
+                  <BookOpen size={16} aria-hidden="true" />
+                  阅读
+                </button>
               )}
             </div>
           </article>

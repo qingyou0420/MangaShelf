@@ -378,11 +378,19 @@ h2 {
   display: grid;
   justify-items: end;
   gap: 6px;
+  min-width: 180px;
 }
 
 .library-meta span {
   color: #1f5f99;
   font-weight: 600;
+}
+
+.compact-action {
+  width: auto;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
 }
 
 .empty-hint,
@@ -685,26 +693,75 @@ button:disabled {
 }
 
 .reader-side {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
   align-self: stretch;
+  min-height: 0;
   padding: 14px;
   border-right: 1px solid #dce2ea;
   color: #566276;
   background: #f8fafc;
 }
 
+.reader-side-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #1f5f99;
+  font-weight: 700;
+}
+
+.chapter-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-height: 500px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.chapter-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #2f3a4f;
+  background: #ffffff;
+  text-align: left;
+}
+
+.chapter-button.active {
+  border-color: #2f87d3;
+  background: #edf6ff;
+  color: #165d9c;
+}
+
+.chapter-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-button small {
+  color: #647084;
+}
+
 .reader-stage {
   display: grid;
   place-items: center;
-  align-content: center;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
   padding: 28px;
   color: #526074;
   text-align: center;
   background: #f3f5f8;
+  overflow: auto;
 }
 
 .reader-stage h2 {
@@ -714,6 +771,33 @@ button:disabled {
 
 .reader-stage p {
   margin-bottom: 0;
+}
+
+.reader-page-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(100%, 860px);
+  color: #334155;
+}
+
+.reader-page-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader-page-image {
+  display: block;
+  max-width: min(100%, 980px);
+  max-height: calc(100dvh - 220px);
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(24, 35, 52, 0.16);
+  object-fit: contain;
 }
 
 .settings-panel {
@@ -790,6 +874,14 @@ button:disabled {
     border-right: 0;
     border-bottom: 1px solid #dce2ea;
   }
+
+  .chapter-list {
+    max-height: 220px;
+  }
+
+  .reader-page-image {
+    max-height: calc(100dvh - 300px);
+  }
 }
 
 @media (max-width: 640px) {
@@ -818,5 +910,6 @@ button:disabled {
 
   .library-meta {
     justify-items: start;
+    min-width: 0;
   }
 }

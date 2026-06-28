@@ -4,6 +4,7 @@ import {
   findMangaConWindows,
   getAutomationStatus,
   importFavorites,
+  listChapterPages,
   listenFavoriteUpdateRecoveryEvents,
   launchMangaCon,
   openFirstUpdatedComic,
@@ -11,6 +12,7 @@ import {
   restartMangaCon,
   scanDetailUpdates,
   scanFavoritesUpdates,
+  scanLocalChapters,
   scanMangaConBadges,
   triggerAllFavoriteUpdates,
   triggerAllFavoriteUpdatesWithRecovery,
@@ -75,6 +77,46 @@ describe("importFavorites", () => {
     });
     expect(summary.imported).toBe(1);
     expect(summary.favorites[0].sourceUri).toBe("cp:ruoshijiechuyuheiye");
+  });
+
+  it("封装本地章节和图片页 commands", async () => {
+    invokeMock
+      .mockResolvedValueOnce([
+        {
+          id: "cp:hzzsddhhshct::第01话",
+          comicId: "cp:hzzsddhhshct",
+          title: "第01话",
+          path: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+          ordinal: 1,
+          pageCount: 2,
+          readProgressPage: 0,
+          specialKind: "regular",
+        },
+      ])
+      .mockResolvedValueOnce([
+        "E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg",
+        "E:\\书架\\婚纱之中待到花火散去\\第01话\\002.jpg",
+      ]);
+
+    await expect(
+      scanLocalChapters({
+        comicId: "cp:hzzsddhhshct",
+        comicDirectory: "E:\\书架\\婚纱之中待到花火散去",
+      }),
+    ).resolves.toHaveLength(1);
+    await expect(
+      listChapterPages({
+        chapterPath: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+      }),
+    ).resolves.toHaveLength(2);
+
+    expect(invokeMock).toHaveBeenCalledWith("scan_local_chapters", {
+      comicId: "cp:hzzsddhhshct",
+      comicDirectory: "E:\\书架\\婚纱之中待到花火散去",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("list_chapter_pages", {
+      chapterPath: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+    });
   });
 
   it("封装漫画控窗口、启动和自动化状态 commands", async () => {

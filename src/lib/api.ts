@@ -7,6 +7,7 @@ import type {
   FavoritesUpdateScanResult,
   ImportFavoritesResult,
   LaunchMangaConResult,
+  LocalChapter,
   MangaConBadgeScanResult,
   MangaConWindow,
   OpenComicResult,
@@ -30,6 +31,15 @@ export type ImportSummary = ImportFavoritesResult;
 
 export interface LaunchMangaConOptions {
   executablePath: string;
+}
+
+export interface ScanLocalChaptersOptions {
+  comicId: string;
+  comicDirectory: string;
+}
+
+export interface ListChapterPagesOptions {
+  chapterPath: string;
 }
 
 export interface TriggerFavoriteUpdateBatchOptions {
@@ -57,6 +67,23 @@ export function importFavorites(
     favoritesJsonPath: options.favoritesJsonPath,
     bookshelfRoot: options.bookshelfRoot,
     databasePath: options.databasePath,
+  });
+}
+
+export function scanLocalChapters(
+  options: ScanLocalChaptersOptions,
+): Promise<LocalChapter[]> {
+  return invoke<LocalChapter[]>("scan_local_chapters", {
+    comicId: options.comicId,
+    comicDirectory: options.comicDirectory,
+  });
+}
+
+export function listChapterPages(
+  options: ListChapterPagesOptions,
+): Promise<string[]> {
+  return invoke<string[]>("list_chapter_pages", {
+    chapterPath: options.chapterPath,
   });
 }
 

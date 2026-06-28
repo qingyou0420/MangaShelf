@@ -27,6 +27,19 @@ export interface BookshelfMatch {
   imageCount: number;
 }
 
+export type ChapterKind = "regular" | "volume" | "machine_translation" | "other";
+
+export interface LocalChapter {
+  id: string;
+  comicId: string;
+  title: string;
+  path: string;
+  ordinal?: number;
+  pageCount: number;
+  readProgressPage: number;
+  specialKind: ChapterKind;
+}
+
 export interface ImportFavoritesResult {
   imported: number;
   matched: number;

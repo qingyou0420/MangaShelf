@@ -1,6 +1,7 @@
 use crate::domain::{Chapter, ChapterKind, LocalManga};
 use anyhow::Result;
 use std::{
+    cmp::Ordering,
     fs,
     path::{Path, PathBuf},
 };
@@ -97,6 +98,116 @@ pub fn scan_comic_chapters(comic_id: &str, comic_dir: impl AsRef<Path>) -> Resul
     });
 
     Ok(chapters)
+}
+
+pub fn list_chapter_pages(chapter_dir: impl AsRef<Path>) -> Result<Vec<String>> {
+    let chapter_dir = chapter_dir.as_ref();
+    if !chapter_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut pages = Vec::new();
+    collect_image_pages(chapter_dir, &mut pages)?;
+    pages.sort_by(|a, b| compare_page_paths(a.as_path(), b.as_path()));
+
+    Ok(pages
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect())
+}
+
+fn collect_image_pages(path: &Path, pages: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(path)? {
+        let child = entry?.path();
+        if child.is_dir() {
+            collect_image_pages(&child, pages)?;
+        } else if child.is_file() && is_image_file(&child) {
+            pages.push(child);
+        }
+    }
+
+    Ok(())
+}
+
+fn compare_page_paths(a: &Path, b: &Path) -> Ordering {
+    let a_name = a
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let b_name = b
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    natural_cmp(a_name, b_name).then_with(|| a.to_string_lossy().cmp(&b.to_string_lossy()))
+}
+
+fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let mut a_index = 0;
+    let mut b_index = 0;
+
+    loop {
+        let a_token = next_natural_token(a, a_index);
+        let b_token = next_natural_token(b, b_index);
+
+        let (a_digits, a_part, next_a) = match a_token {
+            Some(token) => token,
+            None => {
+                return if b_token.is_none() {
+                    Ordering::Equal
+                } else {
+                    Ordering::Less
+                }
+            }
+        };
+        let (b_digits, b_part, next_b) = match b_token {
+            Some(token) => token,
+            None => return Ordering::Greater,
+        };
+
+        let ordering = if a_digits && b_digits {
+            compare_number_tokens(a_part, b_part)
+        } else {
+            a_part
+                .to_ascii_lowercase()
+                .cmp(&b_part.to_ascii_lowercase())
+        };
+
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+
+        a_index = next_a;
+        b_index = next_b;
+    }
+}
+
+fn next_natural_token(value: &str, start: usize) -> Option<(bool, &str, usize)> {
+    let bytes = value.as_bytes();
+    if start >= bytes.len() {
+        return None;
+    }
+
+    let is_digit = bytes[start].is_ascii_digit();
+    let mut end = start + 1;
+    while end < bytes.len() && bytes[end].is_ascii_digit() == is_digit {
+        end += 1;
+    }
+
+    Some((is_digit, &value[start..end], end))
+}
+
+fn compare_number_tokens(a: &str, b: &str) -> Ordering {
+    let a_trimmed = a.trim_start_matches('0');
+    let b_trimmed = b.trim_start_matches('0');
+    let a_number = if a_trimmed.is_empty() { "0" } else { a_trimmed };
+    let b_number = if b_trimmed.is_empty() { "0" } else { b_trimmed };
+
+    a_number
+        .len()
+        .cmp(&b_number.len())
+        .then_with(|| a_number.cmp(b_number))
+        .then_with(|| a.len().cmp(&b.len()))
 }
 
 fn inspect_manga_directory(path: &Path) -> Result<(usize, usize)> {
@@ -252,5 +363,26 @@ mod tests {
         assert_eq!(chapters[4].special_kind, ChapterKind::Volume);
         assert_eq!(chapters[5].special_kind, ChapterKind::Other);
         assert_eq!(chapters[0].read_progress_page, 0);
+    }
+
+    #[test]
+    fn lists_chapter_pages_in_reading_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let chapter = temp.path().join("第01话");
+        let nested = chapter.join("extra");
+        fs::create_dir_all(&nested).expect("chapter dirs");
+        fs::write(chapter.join("10.png"), b"image").expect("image");
+        fs::write(chapter.join("2.png"), b"image").expect("image");
+        fs::write(chapter.join("1.jpg"), b"image").expect("image");
+        fs::write(chapter.join("notes.txt"), b"skip").expect("text");
+        fs::write(nested.join("11.webp"), b"image").expect("image");
+
+        let pages = list_chapter_pages(&chapter).expect("list pages");
+
+        assert_eq!(pages.len(), 4);
+        assert!(pages[0].ends_with("1.jpg"));
+        assert!(pages[1].ends_with("2.png"));
+        assert!(pages[2].ends_with("10.png"));
+        assert!(pages[3].ends_with("11.webp"));
     }
 }

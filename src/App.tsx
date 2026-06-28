@@ -34,6 +34,7 @@ const navigation: Array<{
 function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("dashboard");
   const [favorites, setFavorites] = useState<MangaConFavorite[]>([]);
+  const [selectedReaderComic, setSelectedReaderComic] = useState<MangaConFavorite>();
   const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
   const [isImporting, setIsImporting] = useState(false);
 
@@ -47,6 +48,13 @@ function App() {
         databasePath: approvedDefaultPaths.databasePath,
       });
       setFavorites(summary.favorites);
+      setSelectedReaderComic((current) => {
+        if (!current) {
+          return undefined;
+        }
+
+        return summary.favorites.find((favorite) => favorite.id === current.id);
+      });
       setImportMessage(
         `已导入 ${summary.imported} 条收藏，匹配 ${summary.matched} 本本地漫画`,
       );
@@ -55,6 +63,11 @@ function App() {
     } finally {
       setIsImporting(false);
     }
+  }
+
+  function handleReadFavorite(favorite: MangaConFavorite) {
+    setSelectedReaderComic(favorite);
+    setActiveSection("reader");
   }
 
   return (
@@ -101,9 +114,11 @@ function App() {
             onImportFavorites={handleImportFavorites}
           />
         )}
-        {activeSection === "library" && <LibraryView favorites={favorites} />}
+        {activeSection === "library" && (
+          <LibraryView favorites={favorites} onReadFavorite={handleReadFavorite} />
+        )}
         {activeSection === "automation" && <AutomationView />}
-        {activeSection === "reader" && <ReaderView />}
+        {activeSection === "reader" && <ReaderView comic={selectedReaderComic} />}
         {activeSection === "settings" && <SettingsView paths={approvedDefaultPaths} />}
       </section>
     </main>

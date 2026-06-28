@@ -11,10 +11,13 @@ use tauri::{AppHandle, Emitter};
 
 use crate::{
     automation::AutomationRunStatus,
-    bookshelf::{match_local_manga, scan_bookshelf},
+    bookshelf::{
+        list_chapter_pages as list_chapter_pages_inner, match_local_manga, scan_bookshelf,
+        scan_comic_chapters,
+    },
     config::AppConfig,
     db::CompanionDatabase,
-    domain::ImportSummary,
+    domain::{Chapter, ImportSummary},
     favorites::import_mangacon_favorites,
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
@@ -193,12 +196,7 @@ impl FavoriteUpdateRecoveryEvent {
         }
     }
 
-    fn with_totals(
-        mut self,
-        processed: u32,
-        downloaded_chapters: u32,
-        skipped_count: u32,
-    ) -> Self {
+    fn with_totals(mut self, processed: u32, downloaded_chapters: u32, skipped_count: u32) -> Self {
         self.processed = processed;
         self.downloaded_chapters = downloaded_chapters;
         self.skipped_count = skipped_count;
@@ -240,6 +238,16 @@ fn import_favorites(
 ) -> Result<ImportSummary, String> {
     import_favorites_inner(favorites_json_path, bookshelf_root, database_path)
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn scan_local_chapters(comic_id: String, comic_directory: String) -> Result<Vec<Chapter>, String> {
+    scan_comic_chapters(&comic_id, comic_directory).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn list_chapter_pages(chapter_path: String) -> Result<Vec<String>, String> {
+    list_chapter_pages_inner(chapter_path).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -579,13 +587,15 @@ fn recovery_event_from_favorite_progress(
     restarts: u32,
 ) -> FavoriteUpdateRecoveryEvent {
     match progress.kind {
-        FavoriteUpdateProgressKind::ComicDownloaded => FavoriteUpdateRecoveryEvent::comic_downloaded(
-            progress.processed,
-            progress.downloaded_chapters,
-            progress.skipped_count,
-            progress.chapter_delta,
-        )
-        .with_restarts(restarts),
+        FavoriteUpdateProgressKind::ComicDownloaded => {
+            FavoriteUpdateRecoveryEvent::comic_downloaded(
+                progress.processed,
+                progress.downloaded_chapters,
+                progress.skipped_count,
+                progress.chapter_delta,
+            )
+            .with_restarts(restarts)
+        }
         FavoriteUpdateProgressKind::ComicSkipped => FavoriteUpdateRecoveryEvent::comic_skipped(
             progress.processed,
             progress.downloaded_chapters,
@@ -616,6 +626,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             import_favorites,
+            scan_local_chapters,
+            list_chapter_pages,
             find_mangacon_windows,
             launch_mangacon,
             restart_mangacon,
@@ -699,10 +711,22 @@ mod tests {
         });
 
         assert_eq!(result.events.len(), 4);
-        assert_eq!(result.events[0].kind, FavoriteUpdateRecoveryEventKind::Started);
-        assert_eq!(result.events[1].kind, FavoriteUpdateRecoveryEventKind::Error);
-        assert_eq!(result.events[2].kind, FavoriteUpdateRecoveryEventKind::Restarted);
-        assert_eq!(result.events[3].kind, FavoriteUpdateRecoveryEventKind::Completed);
+        assert_eq!(
+            result.events[0].kind,
+            FavoriteUpdateRecoveryEventKind::Started
+        );
+        assert_eq!(
+            result.events[1].kind,
+            FavoriteUpdateRecoveryEventKind::Error
+        );
+        assert_eq!(
+            result.events[2].kind,
+            FavoriteUpdateRecoveryEventKind::Restarted
+        );
+        assert_eq!(
+            result.events[3].kind,
+            FavoriteUpdateRecoveryEventKind::Completed
+        );
         assert_eq!(result.events[3].message, "自动恢复长跑完成");
         assert_eq!(result.events[3].processed, 2);
         assert_eq!(result.events[3].downloaded_chapters, 3);
