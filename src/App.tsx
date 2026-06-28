@@ -35,6 +35,7 @@ function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("dashboard");
   const [favorites, setFavorites] = useState<MangaConFavorite[]>([]);
   const [selectedReaderComic, setSelectedReaderComic] = useState<MangaConFavorite>();
+  const [favoriteUpdateStartToken, setFavoriteUpdateStartToken] = useState<number>();
   const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
   const [isImporting, setIsImporting] = useState(false);
 
@@ -68,6 +69,12 @@ function App() {
   function handleReadFavorite(favorite: MangaConFavorite) {
     setSelectedReaderComic(favorite);
     setActiveSection("reader");
+  }
+
+  function handleUpdateFavorites() {
+    setImportMessage("已进入自动化，正在一键更新收藏...");
+    setFavoriteUpdateStartToken((token) => (token ?? 0) + 1);
+    setActiveSection("automation");
   }
 
   return (
@@ -112,12 +119,18 @@ function App() {
             importMessage={importMessage}
             isImporting={isImporting}
             onImportFavorites={handleImportFavorites}
+            onUpdateFavorites={handleUpdateFavorites}
           />
         )}
         {activeSection === "library" && (
           <LibraryView favorites={favorites} onReadFavorite={handleReadFavorite} />
         )}
-        {activeSection === "automation" && <AutomationView />}
+        {activeSection === "automation" && (
+          <AutomationView
+            autoStartRecoveryToken={favoriteUpdateStartToken}
+            onAutoStartRecoveryHandled={() => setFavoriteUpdateStartToken(undefined)}
+          />
+        )}
         {activeSection === "reader" && <ReaderView comic={selectedReaderComic} />}
         {activeSection === "settings" && <SettingsView paths={approvedDefaultPaths} />}
       </section>

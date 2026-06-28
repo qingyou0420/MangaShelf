@@ -12,7 +12,7 @@ import {
   ScanSearch,
   Search,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   findMangaConWindows,
   getAutomationStatus,
@@ -76,6 +76,8 @@ interface AutomationViewProps {
   status?: AutomationRunStatus;
   paths?: CompanionPaths;
   service?: AutomationService;
+  autoStartRecoveryToken?: number;
+  onAutoStartRecoveryHandled?: () => void;
 }
 
 export interface AutomationService {
@@ -130,6 +132,8 @@ export function AutomationView({
   status = fixtureStatus,
   paths = approvedDefaultPaths,
   service = defaultAutomationService,
+  autoStartRecoveryToken,
+  onAutoStartRecoveryHandled,
 }: AutomationViewProps) {
   const [currentStatus, setCurrentStatus] = useState(status);
   const [windows, setWindows] = useState<MangaConWindow[]>([]);
@@ -414,6 +418,15 @@ export function AutomationView({
       }
     });
   }
+
+  useEffect(() => {
+    if (autoStartRecoveryToken === undefined) {
+      return;
+    }
+
+    handleTriggerAllFavoriteUpdatesWithRecovery();
+    onAutoStartRecoveryHandled?.();
+  }, [autoStartRecoveryToken]);
 
   return (
     <section className="view" aria-labelledby="automation-title">

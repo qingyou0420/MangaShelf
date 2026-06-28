@@ -16,6 +16,7 @@ interface DashboardProps {
   importMessage?: string;
   isImporting?: boolean;
   onImportFavorites?: () => void;
+  onUpdateFavorites?: () => void;
 }
 
 export function Dashboard({
@@ -25,6 +26,7 @@ export function Dashboard({
   importMessage,
   isImporting = false,
   onImportFavorites,
+  onUpdateFavorites,
 }: DashboardProps) {
   const localCount = favorites.filter((item) => item.localPath).length;
   const pendingUpdates = favorites.filter(
@@ -42,7 +44,7 @@ export function Dashboard({
             管理漫画控收藏、书架匹配和阅读准备任务。
           </p>
         </div>
-        <button className="primary-action" type="button">
+        <button className="primary-action" type="button" onClick={onUpdateFavorites}>
           <RefreshCw size={18} aria-hidden="true" />
           一键更新收藏
         </button>

@@ -2,7 +2,13 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { importFavorites, listChapterPages, scanLocalChapters } from "./lib/api";
+import {
+  importFavorites,
+  listChapterPages,
+  listenFavoriteUpdateRecoveryEvents,
+  scanLocalChapters,
+  triggerAllFavoriteUpdatesWithRecovery,
+} from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -14,18 +20,28 @@ vi.mock("./lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/api")>()),
   importFavorites: vi.fn(),
   listChapterPages: vi.fn(),
+  listenFavoriteUpdateRecoveryEvents: vi.fn(),
   scanLocalChapters: vi.fn(),
+  triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
 }));
 
 const importFavoritesMock = vi.mocked(importFavorites);
 const listChapterPagesMock = vi.mocked(listChapterPages);
+const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
+  listenFavoriteUpdateRecoveryEvents,
+);
 const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
+const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
+  triggerAllFavoriteUpdatesWithRecovery,
+);
 
 describe("App", () => {
   beforeEach(() => {
     importFavoritesMock.mockReset();
     listChapterPagesMock.mockReset();
+    listenFavoriteUpdateRecoveryEventsMock.mockReset();
     scanLocalChaptersMock.mockReset();
+    triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
   });
 
   afterEach(() => {
@@ -142,5 +158,37 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "婚纱之中待到花火散去" })).toBeInTheDocument();
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
+  });
+
+  it("从仪表盘一键更新收藏会进入自动化长跑并调用恢复式全量更新", async () => {
+    const user = userEvent.setup();
+    const unlisten = vi.fn();
+    listenFavoriteUpdateRecoveryEventsMock.mockResolvedValue(unlisten);
+    triggerAllFavoriteUpdatesWithRecoveryMock.mockResolvedValue({
+      requestedLimit: 500,
+      maxRestarts: 2,
+      restarts: 0,
+      processed: 0,
+      downloadedChapters: 0,
+      skippedCount: 0,
+      stoppedReason: "completed",
+      lastError: null,
+      events: [],
+      runs: [],
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "一键更新收藏" }));
+
+    expect(await screen.findByRole("heading", { name: "等待漫画控刷新收藏更新..." })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(triggerAllFavoriteUpdatesWithRecoveryMock).toHaveBeenCalledWith({
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+        maxComics: 500,
+        maxRestarts: 2,
+      });
+    });
+    expect(unlisten).toHaveBeenCalledTimes(1);
   });
 });
