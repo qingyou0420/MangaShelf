@@ -169,6 +169,7 @@ describe("App", () => {
       totalUpdates: 34,
       queued: 33,
       skippedExisting: 1,
+      clearedUpdateMarkers: 34,
       launched: true,
       confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
       tasks: [],
@@ -186,7 +187,9 @@ describe("App", () => {
       });
     });
     expect(
-      screen.getAllByText("已加入漫画控下载队列 33 话，跳过已有任务 1 话").length,
+      screen.getAllByText(
+        "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",
+      ).length,
     ).toBeGreaterThan(0);
   });
 });

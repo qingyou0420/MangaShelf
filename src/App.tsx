@@ -84,8 +84,8 @@ function App() {
       setQueuedUpdateCount(result.queued);
       setImportMessage(
         result.queued > 0
-          ? `已加入漫画控下载队列 ${result.queued} 话，跳过已有任务 ${result.skippedExisting} 话`
-          : `没有新的待加入任务，跳过已有任务 ${result.skippedExisting} 话`,
+          ? `已加入漫画控下载队列 ${result.queued} 话，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`
+          : `没有新的待加入任务，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`,
       );
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));

@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -28,6 +29,7 @@ pub struct QueueMangaConUpdatesResult {
     pub total_updates: usize,
     pub queued: usize,
     pub skipped_existing: usize,
+    pub cleared_update_markers: usize,
     pub tasks: Vec<QueuedMangaConTask>,
 }
 
@@ -54,6 +56,8 @@ pub fn queue_all_badged_updates(
     let mut next_order_index = next_task_order_index(&transaction)?;
     let mut tasks = Vec::new();
     let mut skipped_existing = 0;
+    let mut cleared_update_markers = 0;
+    let mut affected_manga_ids = BTreeSet::new();
     let limit = max_updates
         .map(|value| value as usize)
         .unwrap_or(usize::MAX);
@@ -61,38 +65,44 @@ pub fn queue_all_badged_updates(
     for candidate in candidates.iter().take(limit) {
         if task_already_exists(&transaction, &candidate.uri, &candidate.volume_key)? {
             skipped_existing += 1;
-            continue;
-        }
-
-        let location = format!("{}\\{}", candidate.manga_location, candidate.title);
-        let extra = serde_json::json!({
-            "mid": candidate.manga_id,
-            "vid": candidate.volume_id,
-        })
-        .to_string();
-        transaction.execute(
-            "INSERT INTO mc3_tasks(mu, domain, vk, location, extra, order_index) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                candidate.uri,
-                candidate.domain,
-                candidate.volume_key,
+        } else {
+            let location = format!("{}\\{}", candidate.manga_location, candidate.title);
+            let extra = serde_json::json!({
+                "mid": candidate.manga_id,
+                "vid": candidate.volume_id,
+            })
+            .to_string();
+            transaction.execute(
+                "INSERT INTO mc3_tasks(mu, domain, vk, location, extra, order_index) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    candidate.uri,
+                    candidate.domain,
+                    candidate.volume_key,
+                    location,
+                    extra,
+                    next_order_index,
+                ],
+            )?;
+            tasks.push(QueuedMangaConTask {
+                manga_id: candidate.manga_id,
+                volume_id: candidate.volume_id,
+                manga: candidate.manga.clone(),
+                uri: candidate.uri.clone(),
+                volume_key: candidate.volume_key.clone(),
+                title: candidate.title.clone(),
                 location,
                 extra,
-                next_order_index,
-            ],
-        )?;
-        tasks.push(QueuedMangaConTask {
-            manga_id: candidate.manga_id,
-            volume_id: candidate.volume_id,
-            manga: candidate.manga.clone(),
-            uri: candidate.uri.clone(),
-            volume_key: candidate.volume_key.clone(),
-            title: candidate.title.clone(),
-            location,
-            extra,
-            order_index: next_order_index,
-        });
-        next_order_index += 1;
+                order_index: next_order_index,
+            });
+            next_order_index += 1;
+        }
+
+        cleared_update_markers += clear_volume_update_marker(&transaction, candidate.volume_id)?;
+        affected_manga_ids.insert(candidate.manga_id);
+    }
+
+    for manga_id in affected_manga_ids {
+        sync_badge_value(&transaction, manga_id)?;
     }
 
     transaction.commit()?;
@@ -101,6 +111,7 @@ pub fn queue_all_badged_updates(
         total_updates: candidates.len(),
         queued: tasks.len(),
         skipped_existing,
+        cleared_update_markers,
         tasks,
     })
 }
@@ -160,6 +171,37 @@ fn task_already_exists(connection: &Connection, uri: &str, volume_key: &str) -> 
     Ok(count > 0)
 }
 
+fn clear_volume_update_marker(connection: &Connection, volume_id: i64) -> Result<usize> {
+    connection
+        .execute(
+            "UPDATE mc3_volumes SET status = 0 WHERE rowid = ?1 AND status = 1",
+            params![volume_id],
+        )
+        .map_err(Into::into)
+}
+
+fn sync_badge_value(connection: &Connection, manga_id: i64) -> Result<()> {
+    let remaining_updates: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM mc3_volumes WHERE mid = ?1 AND status = 1",
+        params![manga_id],
+        |row| row.get(0),
+    )?;
+
+    if remaining_updates > 0 {
+        connection.execute(
+            "UPDATE mc3_badges SET value = ?1 WHERE category = 1 AND id = ?2",
+            params![remaining_updates, manga_id],
+        )?;
+    } else {
+        connection.execute(
+            "DELETE FROM mc3_badges WHERE category = 1 AND id = ?1",
+            params![manga_id],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +257,7 @@ mod tests {
         assert_eq!(result.total_updates, 1);
         assert_eq!(result.queued, 1);
         assert_eq!(result.skipped_existing, 0);
+        assert_eq!(result.cleared_update_markers, 1);
         assert!(
             std::path::Path::new(&result.backup_path).exists(),
             "missing backup at {}",
@@ -253,6 +296,23 @@ mod tests {
         assert_eq!(row.5, None);
         assert_eq!(row.6, Some(1));
         assert_eq!(row.7, None);
+
+        let volume_status: i64 = connection
+            .query_row(
+                "SELECT status FROM mc3_volumes WHERE rowid = 37246",
+                [],
+                |row| row.get(0),
+            )
+            .expect("updated volume status");
+        let badge_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM mc3_badges WHERE category = 1 AND id = 31",
+                [],
+                |row| row.get(0),
+            )
+            .expect("badge count");
+        assert_eq!(volume_status, 0);
+        assert_eq!(badge_count, 0);
     }
 
     #[test]
@@ -277,6 +337,77 @@ mod tests {
         assert_eq!(result.total_updates, 1);
         assert_eq!(result.queued, 0);
         assert_eq!(result.skipped_existing, 1);
+        assert_eq!(result.cleared_update_markers, 1);
         assert!(result.tasks.is_empty());
+
+        let connection = Connection::open(path).expect("reopen");
+        let volume_status: i64 = connection
+            .query_row(
+                "SELECT status FROM mc3_volumes WHERE rowid = 37246",
+                [],
+                |row| row.get(0),
+            )
+            .expect("updated volume status");
+        let badge_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM mc3_badges WHERE category = 1 AND id = 31",
+                [],
+                |row| row.get(0),
+            )
+            .expect("badge count");
+        assert_eq!(volume_status, 0);
+        assert_eq!(badge_count, 0);
+    }
+
+    #[test]
+    fn keeps_remaining_badge_count_when_limit_leaves_updates_unprocessed() {
+        let (_temp, path) = create_fixture_db();
+        let connection = Connection::open(&path).expect("open");
+        connection
+            .execute(
+                "INSERT INTO mc3_volumes(rowid, mid, key, title, status) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![37248, 31, "later-update", "第358话", 1],
+            )
+            .expect("second updated volume");
+        connection
+            .execute(
+                "UPDATE mc3_badges SET value = 2 WHERE category = 1 AND id = 31",
+                [],
+            )
+            .expect("badge value");
+        drop(connection);
+
+        let result = queue_all_badged_updates(&path, Some(1)).expect("queue updates");
+
+        assert_eq!(result.total_updates, 2);
+        assert_eq!(result.queued, 1);
+        assert_eq!(result.skipped_existing, 0);
+        assert_eq!(result.cleared_update_markers, 1);
+
+        let connection = Connection::open(path).expect("reopen");
+        let processed_status: i64 = connection
+            .query_row(
+                "SELECT status FROM mc3_volumes WHERE rowid = 37246",
+                [],
+                |row| row.get(0),
+            )
+            .expect("processed volume status");
+        let remaining_status: i64 = connection
+            .query_row(
+                "SELECT status FROM mc3_volumes WHERE rowid = 37248",
+                [],
+                |row| row.get(0),
+            )
+            .expect("remaining volume status");
+        let badge_value: i64 = connection
+            .query_row(
+                "SELECT value FROM mc3_badges WHERE category = 1 AND id = 31",
+                [],
+                |row| row.get(0),
+            )
+            .expect("badge value");
+        assert_eq!(processed_status, 0);
+        assert_eq!(remaining_status, 1);
+        assert_eq!(badge_value, 1);
     }
 }

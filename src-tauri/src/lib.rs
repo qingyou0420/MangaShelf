@@ -232,6 +232,7 @@ pub struct QueueMangaConUpdatesCommandResult {
     pub total_updates: usize,
     pub queued: usize,
     pub skipped_existing: usize,
+    pub cleared_update_markers: usize,
     pub launched: bool,
     pub launch_pid: Option<u32>,
     pub confirm: ContinueDownloadConfirmResult,
@@ -371,7 +372,8 @@ fn queue_mangacon_updates(
 ) -> Result<QueueMangaConUpdatesCommandResult, String> {
     let queue = queue_all_badged_updates(manga_con_database_path, max_updates)
         .map_err(|err| err.to_string())?;
-    let (launched, launch_pid, confirm) = if queue.queued > 0 {
+    let should_refresh_mangacon = queue.queued > 0 || queue.cleared_update_markers > 0;
+    let (launched, launch_pid, confirm) = if should_refresh_mangacon {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
         let confirm = confirm_continue_download_dialog_with_wait()?;
         (true, Some(launch.pid), confirm)
@@ -392,6 +394,7 @@ fn queue_mangacon_updates(
         total_updates,
         queued,
         skipped_existing,
+        cleared_update_markers,
         tasks,
     } = queue;
     Ok(QueueMangaConUpdatesCommandResult {
@@ -399,6 +402,7 @@ fn queue_mangacon_updates(
         total_updates,
         queued,
         skipped_existing,
+        cleared_update_markers,
         launched,
         launch_pid,
         confirm,

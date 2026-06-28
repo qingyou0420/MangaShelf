@@ -572,6 +572,7 @@ describe("importFavorites", () => {
       totalUpdates: 34,
       queued: 33,
       skippedExisting: 1,
+      clearedUpdateMarkers: 34,
       launched: true,
       confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
       tasks: [],
@@ -594,6 +595,7 @@ describe("importFavorites", () => {
       totalUpdates: 34,
       queued: 33,
       skippedExisting: 1,
+      clearedUpdateMarkers: 34,
       launched: true,
     });
   });

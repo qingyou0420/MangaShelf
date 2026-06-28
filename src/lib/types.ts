@@ -219,6 +219,7 @@ export interface QueueMangaConUpdatesResult {
   totalUpdates: number;
   queued: number;
   skippedExisting: number;
+  clearedUpdateMarkers: number;
   launched: boolean;
   launchPid?: number | null;
   confirm: ContinueDownloadConfirmResult;
