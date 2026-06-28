@@ -43,11 +43,10 @@ function App() {
 
   async function handleImportFavorites() {
     setIsImporting(true);
-    setImportMessage("正在导入漫画控收藏并扫描书架...");
+    setImportMessage("正在导入漫画控收藏...");
     try {
       const summary = await importFavorites({
         favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
-        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
         databasePath: approvedDefaultPaths.databasePath,
       });
       setFavorites(summary.favorites);
@@ -59,7 +58,7 @@ function App() {
         return summary.favorites.find((favorite) => favorite.id === current.id);
       });
       setImportMessage(
-        `已导入 ${summary.imported} 条收藏，匹配 ${summary.matched} 本本地漫画`,
+        `已导入 ${summary.imported} 条收藏，书架匹配稍后执行`,
       );
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));

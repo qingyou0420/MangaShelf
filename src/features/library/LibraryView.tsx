@@ -79,5 +79,9 @@ function favoriteStatusLabel(favorite: MangaConFavorite) {
     return "缺少本地目录";
   }
 
-  return favorite.scanStatus === "pending" ? "待扫描" : "已处理";
+  if (favorite.scanStatus === "imported") {
+    return "已导入";
+  }
+
+  return favorite.scanStatus === "pending" ? "待匹配" : "已处理";
 }

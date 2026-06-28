@@ -56,7 +56,7 @@ describe("App", () => {
     const user = userEvent.setup();
     importFavoritesMock.mockResolvedValue({
       imported: 2,
-      matched: 1,
+      matched: 0,
       favorites: [
         {
           id: "cp:hzzsddhhshct",
@@ -66,11 +66,10 @@ describe("App", () => {
           sourceUri: "cp:hzzsddhhshct",
           sourceScheme: "cp",
           sourceDomain: "www.2025copy.com",
-          localPath: "E:\\书架\\婚纱之中待到花火散去",
-          chapterCount: 24,
-          imageCount: 720,
+          chapterCount: 0,
+          imageCount: 0,
           readProgressPage: 0,
-          scanStatus: "matched",
+          scanStatus: "imported",
         },
         {
           id: "mg:37753",
@@ -83,7 +82,7 @@ describe("App", () => {
           chapterCount: 0,
           imageCount: 0,
           readProgressPage: 0,
-          scanStatus: "missing",
+          scanStatus: "imported",
         },
       ],
     });
@@ -95,12 +94,11 @@ describe("App", () => {
     await waitFor(() => {
       expect(importFavoritesMock).toHaveBeenCalledWith({
         favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
-        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
         databasePath: approvedDefaultPaths.databasePath,
       });
     });
     expect(
-      screen.getAllByText("已导入 2 条收藏，匹配 1 本本地漫画").length,
+      screen.getAllByText("已导入 2 条收藏，书架匹配稍后执行").length,
     ).toBeGreaterThan(0);
 
     const favoritesMetric = screen.getByLabelText("收藏统计");
@@ -109,8 +107,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "书库" }));
 
     expect(screen.getAllByText("婚纱之中待到花火散去").length).toBeGreaterThan(0);
-    expect(screen.getByText("本地 24 章 / 720 页")).toBeInTheDocument();
-    expect(screen.getByText("缺少本地目录")).toBeInTheDocument();
+    expect(screen.getAllByText("已导入").length).toBeGreaterThan(0);
   });
 
   it("可从书库打开已匹配漫画并进入本地阅读器", async () => {

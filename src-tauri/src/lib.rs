@@ -11,10 +11,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::{
     automation::AutomationRunStatus,
-    bookshelf::{
-        list_chapter_pages as list_chapter_pages_inner, match_local_manga, scan_bookshelf,
-        scan_comic_chapters,
-    },
+    bookshelf::{list_chapter_pages as list_chapter_pages_inner, scan_comic_chapters},
     config::AppConfig,
     db::CompanionDatabase,
     domain::{Chapter, ImportSummary},
@@ -407,41 +404,26 @@ fn queue_mangacon_updates(
 
 fn import_favorites_inner(
     favorites_json_path: Option<String>,
-    bookshelf_root: Option<String>,
+    _bookshelf_root: Option<String>,
     database_path: String,
 ) -> anyhow::Result<ImportSummary> {
     let defaults = AppConfig::default();
     let favorites_path = favorites_json_path
         .map(PathBuf::from)
         .unwrap_or(defaults.mangacon_favorites_json);
-    let bookshelf_root = bookshelf_root
-        .map(PathBuf::from)
-        .unwrap_or(defaults.bookshelf_root);
 
     let mut comics = import_mangacon_favorites(favorites_path)?;
-    let library = scan_bookshelf(bookshelf_root)?;
     let db = CompanionDatabase::open(database_path)?;
     db.migrate()?;
 
     for comic in &mut comics {
-        if let Some(local_match) = match_local_manga(comic.title(), &library) {
-            comic.local_path = Some(local_match.directory);
-            comic.chapter_count = local_match.chapter_count;
-            comic.image_count = local_match.image_count;
-            comic.scan_status = domain::ScanStatus::Matched;
-        } else {
-            comic.scan_status = domain::ScanStatus::Missing;
-        }
+        comic.scan_status = domain::ScanStatus::Imported;
         db.upsert_comic(comic)?;
     }
 
-    let matched = comics
-        .iter()
-        .filter(|record| record.local_path.is_some())
-        .count();
     Ok(ImportSummary {
         imported: comics.len(),
-        matched,
+        matched: 0,
         favorites: comics,
     })
 }
@@ -752,6 +734,38 @@ mod tests {
         assert_eq!(summary.imported, 1);
         assert_eq!(summary.favorites[0].source_uri, "cp:ruoshijiechuyuheiye");
         assert_eq!(summary.favorites[0].source_scheme.as_deref(), Some("cp"));
+    }
+
+    #[test]
+    fn import_favorites_does_not_scan_bookshelf_during_import() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let favorites_path = temp.path().join("favorites.json");
+        let db_path = temp.path().join("state.sqlite");
+        let local_chapter = temp.path().join("若世界處於黑夜").join("第001话");
+        fs::create_dir_all(&local_chapter).expect("local chapter dir");
+        fs::write(local_chapter.join("001.jpg"), b"image").expect("local image");
+        fs::write(
+            &favorites_path,
+            r#"{"favorites":[{"location":"若世界處於黑夜","name":"若世界處於黑夜","tags":["むちまろ"],"uri":"cp:ruoshijiechuyuheiye"}]}"#,
+        )
+        .expect("favorites fixture");
+
+        let summary = import_favorites_inner(
+            Some(favorites_path.display().to_string()),
+            Some(temp.path().display().to_string()),
+            db_path.display().to_string(),
+        )
+        .expect("import summary");
+
+        assert_eq!(summary.imported, 1);
+        assert_eq!(summary.matched, 0);
+        assert_eq!(summary.favorites[0].local_path, None);
+        assert_eq!(summary.favorites[0].chapter_count, 0);
+        assert_eq!(summary.favorites[0].image_count, 0);
+        assert_eq!(
+            summary.favorites[0].scan_status,
+            domain::ScanStatus::Imported
+        );
     }
 
     #[test]
