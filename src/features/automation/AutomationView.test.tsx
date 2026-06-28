@@ -1,11 +1,22 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { approvedDefaultPaths } from "../../test/fixtures";
+import type {
+  FavoriteUpdateRecoveryEvent,
+  RecoveringFavoriteUpdateResult,
+} from "../../lib/types";
+import type { AutomationService } from "./AutomationView";
 import { AutomationView } from "./AutomationView";
+import {
+  buildRecoveryRunHistoryRecord,
+  loadRecoveryRunHistory,
+  saveRecoveryRunHistory,
+} from "./recoveryHistory";
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
 });
 
 describe("AutomationView", () => {
@@ -268,9 +279,44 @@ describe("AutomationView", () => {
         downloadedChapters: 520,
         skippedCount: 3,
         stoppedReason: "completed" as const,
-        lastError: null,
+        lastError: "漫画控窗口无响应",
+        events: [
+          {
+            kind: "started" as const,
+            message: "开始自动恢复长跑，目标 500 本",
+            processed: 0,
+            downloadedChapters: 0,
+            skippedCount: 0,
+            restarts: 0,
+          },
+          {
+            kind: "error" as const,
+            message: "漫画控窗口无响应",
+            processed: 120,
+            downloadedChapters: 160,
+            skippedCount: 1,
+            restarts: 0,
+          },
+          {
+            kind: "restarted" as const,
+            message: "漫画控已重启，等待红点刷新（1/2）",
+            processed: 120,
+            downloadedChapters: 160,
+            skippedCount: 1,
+            restarts: 1,
+          },
+          {
+            kind: "completed" as const,
+            message: "自动恢复长跑完成",
+            processed: 447,
+            downloadedChapters: 520,
+            skippedCount: 3,
+            restarts: 1,
+          },
+        ],
         runs: [],
       }),
+      listenFavoriteUpdateRecoveryEvents: async () => () => {},
     };
 
     render(
@@ -368,5 +414,314 @@ describe("AutomationView", () => {
     expect(screen.getByText("恢复重启 1/2")).toBeInTheDocument();
     expect(screen.getByText("恢复跳过收藏 3")).toBeInTheDocument();
     expect(screen.getByText("恢复停止原因 completed")).toBeInTheDocument();
+    expect(screen.getByText("自动更新长跑")).toBeInTheDocument();
+    expect(screen.getByText("跳过漫画").closest("div")).toHaveTextContent("3");
+    expect(screen.getByText("自动恢复长跑完成")).toBeInTheDocument();
+    expect(
+      screen.getByText("已处理 447 本，下载 520 话，跳过 3 本，重启 1 次"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("上次异常")).toBeInTheDocument();
+    expect(screen.getAllByText("漫画控窗口无响应").length).toBeGreaterThan(0);
+  });
+
+  it("自动恢复长跑运行中实时追加事件日志", async () => {
+    const user = userEvent.setup();
+    let liveHandler: ((event: FavoriteUpdateRecoveryEvent) => void) | undefined;
+    let resolveRun!: (value: RecoveringFavoriteUpdateResult) => void;
+    const runPromise = new Promise<RecoveringFavoriteUpdateResult>((resolve) => {
+      resolveRun = resolve;
+    });
+    const unlisten = vi.fn();
+    const service: AutomationService = {
+      findWindows: async () => [],
+      launch: async () => {
+        throw new Error("not used");
+      },
+      restart: async () => {
+        throw new Error("not used");
+      },
+      getStatus: async () => {
+        throw new Error("not used");
+      },
+      scanBadges: async () => {
+        throw new Error("not used");
+      },
+      scanFavoritesUpdates: async () => {
+        throw new Error("not used");
+      },
+      openFavorites: async () => {
+        throw new Error("not used");
+      },
+      openFirstUpdatedComic: async () => {
+        throw new Error("not used");
+      },
+      scanDetailUpdates: async () => {
+        throw new Error("not used");
+      },
+      triggerFirstDetailUpdateDownload: async () => {
+        throw new Error("not used");
+      },
+      triggerDetailUpdateDownloadBatch: async () => {
+        throw new Error("not used");
+      },
+      triggerNextFavoriteUpdateDownload: async () => {
+        throw new Error("not used");
+      },
+      triggerFavoriteUpdateBatch: async () => {
+        throw new Error("not used");
+      },
+      triggerAllFavoriteUpdates: async () => {
+        throw new Error("not used");
+      },
+      triggerAllFavoriteUpdatesWithRecovery: async () => runPromise,
+      listenFavoriteUpdateRecoveryEvents: async (handler) => {
+        liveHandler = handler;
+        return unlisten;
+      },
+    };
+
+    render(<AutomationView paths={approvedDefaultPaths} service={service} />);
+
+    await user.click(screen.getByRole("button", { name: "自动恢复更新全部" }));
+    await waitFor(() => expect(liveHandler).toBeDefined());
+
+    liveHandler?.({
+      kind: "started",
+      message: "开始自动恢复长跑，目标 500 本",
+      processed: 0,
+      downloadedChapters: 0,
+      skippedCount: 0,
+      restarts: 0,
+    });
+
+    expect(
+      await screen.findByText("开始自动恢复长跑，目标 500 本"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("已处理 0 本，下载 0 话，跳过 0 本，重启 0 次"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("运行中")).toBeInTheDocument();
+
+    resolveRun!({
+      requestedLimit: 500,
+      maxRestarts: 2,
+      restarts: 0,
+      processed: 0,
+      downloadedChapters: 0,
+      skippedCount: 0,
+      stoppedReason: "completed",
+      lastError: null,
+      events: [
+        {
+          kind: "started",
+          message: "开始自动恢复长跑，目标 500 本",
+          processed: 0,
+          downloadedChapters: 0,
+          skippedCount: 0,
+          restarts: 0,
+        },
+        {
+          kind: "completed",
+          message: "自动恢复长跑完成",
+          processed: 0,
+          downloadedChapters: 0,
+          skippedCount: 0,
+          restarts: 0,
+        },
+      ],
+      runs: [],
+    });
+
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(1));
+  });
+
+  it("实时日志较多时折叠较早记录", async () => {
+    const realtimeEvents = Array.from({ length: 126 }, (_, index) => ({
+      kind: "comic_downloaded" as const,
+      message: `第 ${index + 1} 本已交给漫画控，下载 1 话`,
+      processed: index + 1,
+      downloadedChapters: index + 1,
+      skippedCount: 0,
+      restarts: 0,
+    }));
+    const service: AutomationService = {
+      findWindows: async () => [],
+      launch: async () => {
+        throw new Error("not used");
+      },
+      restart: async () => {
+        throw new Error("not used");
+      },
+      getStatus: async () => {
+        throw new Error("not used");
+      },
+      scanBadges: async () => {
+        throw new Error("not used");
+      },
+      scanFavoritesUpdates: async () => {
+        throw new Error("not used");
+      },
+      openFavorites: async () => {
+        throw new Error("not used");
+      },
+      openFirstUpdatedComic: async () => {
+        throw new Error("not used");
+      },
+      scanDetailUpdates: async () => {
+        throw new Error("not used");
+      },
+      triggerFirstDetailUpdateDownload: async () => {
+        throw new Error("not used");
+      },
+      triggerDetailUpdateDownloadBatch: async () => {
+        throw new Error("not used");
+      },
+      triggerNextFavoriteUpdateDownload: async () => {
+        throw new Error("not used");
+      },
+      triggerFavoriteUpdateBatch: async () => {
+        throw new Error("not used");
+      },
+      triggerAllFavoriteUpdates: async () => {
+        throw new Error("not used");
+      },
+      listenFavoriteUpdateRecoveryEvents: async () => () => {},
+      triggerAllFavoriteUpdatesWithRecovery: async () => ({
+        requestedLimit: 500,
+        maxRestarts: 2,
+        restarts: 0,
+        processed: 126,
+        downloadedChapters: 126,
+        skippedCount: 0,
+        stoppedReason: "completed",
+        lastError: null,
+        events: realtimeEvents,
+        runs: [],
+      }),
+    };
+
+    render(<AutomationView paths={approvedDefaultPaths} service={service} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "自动恢复更新全部" }));
+
+    expect(await screen.findByText("已折叠较早日志 6 条")).toBeInTheDocument();
+    expect(screen.queryByText("第 1 本已交给漫画控，下载 1 话")).not.toBeInTheDocument();
+    expect(screen.getByText("第 126 本已交给漫画控，下载 1 话")).toBeInTheDocument();
+  });
+
+  it("启动时恢复上次保存的自动恢复长跑记录", () => {
+    saveRecoveryRunHistory(
+      buildRecoveryRunHistoryRecord({
+        result: {
+          requestedLimit: 500,
+          maxRestarts: 2,
+          restarts: 1,
+          processed: 12,
+          downloadedChapters: 30,
+          skippedCount: 2,
+          stoppedReason: "completed",
+          lastError: "漫画控窗口无响应",
+          events: [
+            {
+              kind: "completed",
+              message: "自动恢复长跑完成",
+              processed: 12,
+              downloadedChapters: 30,
+              skippedCount: 2,
+              restarts: 1,
+            },
+          ],
+          runs: [],
+        },
+        now: new Date("2026-06-28T08:00:00.000Z"),
+      }),
+    );
+
+    render(<AutomationView paths={approvedDefaultPaths} />);
+
+    expect(screen.getByText("已恢复上次长跑记录")).toBeInTheDocument();
+    expect(screen.getByText("恢复处理 12/500")).toBeInTheDocument();
+    expect(screen.getByText("处理漫画").closest("div")).toHaveTextContent("12");
+    expect(screen.getByText("下载章节").closest("div")).toHaveTextContent("30");
+    expect(screen.getByText("自动恢复长跑完成")).toBeInTheDocument();
+    expect(screen.getAllByText("漫画控窗口无响应").length).toBeGreaterThan(0);
+  });
+
+  it("自动恢复长跑完成后保存最新记录", async () => {
+    const service: AutomationService = {
+      findWindows: async () => [],
+      launch: async () => {
+        throw new Error("not used");
+      },
+      restart: async () => {
+        throw new Error("not used");
+      },
+      getStatus: async () => {
+        throw new Error("not used");
+      },
+      scanBadges: async () => {
+        throw new Error("not used");
+      },
+      scanFavoritesUpdates: async () => {
+        throw new Error("not used");
+      },
+      openFavorites: async () => {
+        throw new Error("not used");
+      },
+      openFirstUpdatedComic: async () => {
+        throw new Error("not used");
+      },
+      scanDetailUpdates: async () => {
+        throw new Error("not used");
+      },
+      triggerFirstDetailUpdateDownload: async () => {
+        throw new Error("not used");
+      },
+      triggerDetailUpdateDownloadBatch: async () => {
+        throw new Error("not used");
+      },
+      triggerNextFavoriteUpdateDownload: async () => {
+        throw new Error("not used");
+      },
+      triggerFavoriteUpdateBatch: async () => {
+        throw new Error("not used");
+      },
+      triggerAllFavoriteUpdates: async () => {
+        throw new Error("not used");
+      },
+      listenFavoriteUpdateRecoveryEvents: async () => () => {},
+      triggerAllFavoriteUpdatesWithRecovery: async () => ({
+        requestedLimit: 500,
+        maxRestarts: 2,
+        restarts: 0,
+        processed: 18,
+        downloadedChapters: 41,
+        skippedCount: 1,
+        stoppedReason: "completed",
+        lastError: null,
+        events: [
+          {
+            kind: "completed",
+            message: "自动恢复长跑完成",
+            processed: 18,
+            downloadedChapters: 41,
+            skippedCount: 1,
+            restarts: 0,
+          },
+        ],
+        runs: [],
+      }),
+    };
+
+    render(<AutomationView paths={approvedDefaultPaths} service={service} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "自动恢复更新全部" }));
+
+    await waitFor(() => {
+      expect(loadRecoveryRunHistory()?.result?.processed).toBe(18);
+    });
+    expect(loadRecoveryRunHistory()?.events.at(-1)?.message).toBe(
+      "自动恢复长跑完成",
+    );
   });
 });

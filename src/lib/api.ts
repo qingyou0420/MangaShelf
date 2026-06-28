@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AutomationRunStatus,
   DetailUpdateScanResult,
+  FavoriteUpdateRecoveryEvent,
   FavoritesUpdateScanResult,
   ImportFavoritesResult,
   LaunchMangaConResult,
@@ -15,6 +17,8 @@ import type {
   TriggerFavoriteUpdateBatchResult,
   TriggerNextFavoriteUpdateDownloadResult,
 } from "./types";
+
+export const FAVORITE_UPDATE_RECOVERY_EVENT = "favorite-update-recovery-event";
 
 export interface ImportFavoritesOptions {
   favoritesJsonPath?: string;
@@ -150,5 +154,14 @@ export function triggerAllFavoriteUpdatesWithRecovery(
       maxComics: options.maxComics,
       maxRestarts: options.maxRestarts,
     },
+  );
+}
+
+export function listenFavoriteUpdateRecoveryEvents(
+  handler: (event: FavoriteUpdateRecoveryEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<FavoriteUpdateRecoveryEvent>(
+    FAVORITE_UPDATE_RECOVERY_EVENT,
+    (event) => handler(event.payload),
   );
 }

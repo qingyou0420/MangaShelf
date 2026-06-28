@@ -1,4 +1,6 @@
 import {
+  Activity,
+  AlertTriangle,
   CheckCircle2,
   Clock3,
   ListChecks,
@@ -10,11 +12,12 @@ import {
   ScanSearch,
   Search,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   findMangaConWindows,
   getAutomationStatus,
   launchMangaCon,
+  listenFavoriteUpdateRecoveryEvents,
   openFirstUpdatedComic,
   openMangaConFavorites,
   restartMangaCon,
@@ -32,6 +35,7 @@ import type {
   AutomationRunStatus,
   CompanionPaths,
   DetailUpdateScanResult,
+  FavoriteUpdateRecoveryEvent,
   FavoritesUpdateScanResult,
   LaunchMangaConResult,
   MangaConBadgeScanResult,
@@ -45,6 +49,14 @@ import type {
   TriggerNextFavoriteUpdateDownloadResult,
 } from "../../lib/types";
 import { approvedDefaultPaths } from "../../lib/defaults";
+import {
+  buildRecoveryRunHistoryRecord,
+  clearRecoveryRunHistory,
+  loadRecoveryRunHistory,
+  saveRecoveryRunHistory,
+} from "./recoveryHistory";
+import type { RecoveryRunHistoryRecord } from "./recoveryHistory";
+import { buildRecoveryRunSnapshot, recoveryNeedsAttention } from "./runLog";
 
 const timeline = [
   "监听漫画控收藏文件",
@@ -81,6 +93,9 @@ export interface AutomationService {
   triggerNextFavoriteUpdateDownload: () => Promise<TriggerNextFavoriteUpdateDownloadResult>;
   triggerFavoriteUpdateBatch: (maxUpdates: number) => Promise<TriggerFavoriteUpdateBatchResult>;
   triggerAllFavoriteUpdates: () => Promise<TriggerFavoriteUpdateBatchResult>;
+  listenFavoriteUpdateRecoveryEvents: (
+    handler: (event: FavoriteUpdateRecoveryEvent) => void,
+  ) => Promise<() => void>;
   triggerAllFavoriteUpdatesWithRecovery: (
     executablePath: string,
   ) => Promise<RecoveringFavoriteUpdateResult>;
@@ -102,6 +117,7 @@ const defaultAutomationService: AutomationService = {
   triggerNextFavoriteUpdateDownload,
   triggerFavoriteUpdateBatch: (maxUpdates) => triggerFavoriteUpdateBatch({ maxUpdates }),
   triggerAllFavoriteUpdates: () => triggerAllFavoriteUpdates({ maxComics: 500 }),
+  listenFavoriteUpdateRecoveryEvents,
   triggerAllFavoriteUpdatesWithRecovery: (executablePath) =>
     triggerAllFavoriteUpdatesWithRecovery({
       executablePath,
@@ -134,11 +150,45 @@ export function AutomationView({
     useState<TriggerFavoriteUpdateBatchResult>();
   const [allFavoriteUpdateResult, setAllFavoriteUpdateResult] =
     useState<TriggerFavoriteUpdateBatchResult>();
+  const [loadedRecoveryHistory] = useState(() => loadRecoveryRunHistory());
+  const [recoveryHistoryRecord, setRecoveryHistoryRecord] =
+    useState(loadedRecoveryHistory);
   const [recoveryFavoriteUpdateResult, setRecoveryFavoriteUpdateResult] =
-    useState<RecoveringFavoriteUpdateResult>();
+    useState<RecoveringFavoriteUpdateResult | undefined>(
+      loadedRecoveryHistory?.result,
+    );
+  const recoveryEventsRef = useRef<FavoriteUpdateRecoveryEvent[]>(
+    loadedRecoveryHistory?.events ?? [],
+  );
+  const [liveRecoveryEvents, setLiveRecoveryEvents] = useState<
+    FavoriteUpdateRecoveryEvent[]
+  >(loadedRecoveryHistory?.events ?? []);
   const [message, setMessage] = useState("尚未联动漫画控");
   const [busyAction, setBusyAction] = useState<string>();
   const [error, setError] = useState<string>();
+  const recoverySnapshot = buildRecoveryRunSnapshot(
+    recoveryFavoriteUpdateResult,
+    liveRecoveryEvents,
+  );
+  const latestLiveErrorEvent = liveRecoveryEvents
+    .slice()
+    .reverse()
+    .find((event) => event.kind === "error");
+  const recoveryAlertMessage =
+    error ??
+    recoveryFavoriteUpdateResult?.lastError ??
+    (isLiveRecoveryErrorVisible(latestLiveErrorEvent, recoveryFavoriteUpdateResult)
+      ? latestLiveErrorEvent?.message
+      : undefined);
+  const recoveryAlertLabel = error ? "当前异常" : "上次异常";
+  const isRecoveryRunning = busyAction === "trigger-all-favorite-updates-recovery";
+  const recoveryHistoryNeedsAttention =
+    !isRecoveryRunning &&
+    (recoveryHistoryRecord?.status === "running" ||
+      recoveryHistoryRecord?.status === "needs_attention");
+  const recoveryAttention =
+    recoveryNeedsAttention(recoveryFavoriteUpdateResult, error) ||
+    recoveryHistoryNeedsAttention;
 
   async function runAction(actionName: string, action: () => Promise<void>) {
     setBusyAction(actionName);
@@ -150,6 +200,31 @@ export function AutomationView({
     } finally {
       setBusyAction(undefined);
     }
+  }
+
+  function rememberRecoveryHistory(record: RecoveryRunHistoryRecord) {
+    setRecoveryHistoryRecord(record);
+    saveRecoveryRunHistory(record);
+  }
+
+  function forgetRecoveryHistory() {
+    setRecoveryHistoryRecord(undefined);
+    clearRecoveryRunHistory();
+  }
+
+  function replaceLiveRecoveryEvents(events: FavoriteUpdateRecoveryEvent[]) {
+    recoveryEventsRef.current = events;
+    setLiveRecoveryEvents(events);
+  }
+
+  function appendLiveRecoveryEvent(event: FavoriteUpdateRecoveryEvent) {
+    const nextEvents = appendRecoveryEvent(recoveryEventsRef.current, event);
+    replaceLiveRecoveryEvents(nextEvents);
+    rememberRecoveryHistory(
+      buildRecoveryRunHistoryRecord({
+        events: nextEvents,
+      }),
+    );
   }
 
   function handleFindWindows() {
@@ -188,6 +263,8 @@ export function AutomationView({
       setFavoriteUpdateBatchResult(undefined);
       setAllFavoriteUpdateResult(undefined);
       setRecoveryFavoriteUpdateResult(undefined);
+      replaceLiveRecoveryEvents([]);
+      forgetRecoveryHistory();
       setMessage("漫画控已重启，等待刷新红点");
       setWindows(await service.findWindows());
     });
@@ -302,16 +379,39 @@ export function AutomationView({
 
   function handleTriggerAllFavoriteUpdatesWithRecovery() {
     void runAction("trigger-all-favorite-updates-recovery", async () => {
-      const result = await service.triggerAllFavoriteUpdatesWithRecovery(
-        paths.mangaConExecutable,
-      );
-      setRecoveryFavoriteUpdateResult(result);
-      const lastRun = result.runs.at(-1);
-      const lastItem = lastRun?.items.at(-1);
-      if (lastItem) {
-        setWindows([lastItem.download.window]);
+      let unlisten: (() => void) | undefined;
+      setRecoveryFavoriteUpdateResult(undefined);
+      replaceLiveRecoveryEvents([]);
+      forgetRecoveryHistory();
+      setMessage("自动恢复长跑已开始");
+      try {
+        try {
+          unlisten = await service.listenFavoriteUpdateRecoveryEvents((event) => {
+            appendLiveRecoveryEvent(event);
+          });
+        } catch {
+          setMessage("实时日志监听失败，继续等待最终结果");
+        }
+
+        const result = await service.triggerAllFavoriteUpdatesWithRecovery(
+          paths.mangaConExecutable,
+        );
+        setRecoveryFavoriteUpdateResult(result);
+        replaceLiveRecoveryEvents(result.events);
+        rememberRecoveryHistory(
+          buildRecoveryRunHistoryRecord({
+            result,
+          }),
+        );
+        const lastRun = result.runs.at(-1);
+        const lastItem = lastRun?.items.at(-1);
+        if (lastItem) {
+          setWindows([lastItem.download.window]);
+        }
+        setMessage("自动恢复收藏更新处理完成");
+      } finally {
+        unlisten?.();
       }
-      setMessage("自动恢复收藏更新处理完成");
     });
   }
 
@@ -732,6 +832,137 @@ export function AutomationView({
         </div>
       </section>
 
+      <section
+        className={`panel long-run-panel${recoveryAttention ? " needs-attention" : ""}`}
+        aria-labelledby="long-run-title"
+      >
+        <div className="panel-title-row">
+          <Activity size={20} aria-hidden="true" />
+          <h2 id="long-run-title">自动更新长跑</h2>
+        </div>
+        {recoveryHistoryRecord && !isRecoveryRunning && (
+          <p className="long-run-history-note">已恢复上次长跑记录</p>
+        )}
+
+        <div className="long-run-summary" aria-label="自动更新长跑汇总">
+          <div>
+            <span>状态</span>
+            <strong>
+              {isRecoveryRunning
+                ? "运行中"
+                : recoveryAttention
+                  ? "需处理"
+                  : recoveryFavoriteUpdateResult
+                    ? "已完成"
+                    : "未开始"}
+            </strong>
+          </div>
+          <div>
+            <span>处理漫画</span>
+            <strong>{recoverySnapshot.processed}</strong>
+          </div>
+          <div>
+            <span>下载章节</span>
+            <strong>{recoverySnapshot.downloadedChapters}</strong>
+          </div>
+          <div>
+            <span>跳过漫画</span>
+            <strong>{recoverySnapshot.skippedCount}</strong>
+          </div>
+          <div>
+            <span>重启次数</span>
+            <strong>
+              {`${recoverySnapshot.restarts}/${recoverySnapshot.maxRestarts}`}
+            </strong>
+          </div>
+        </div>
+
+        {recoveryAlertMessage && (
+          <div className="recovery-alert">
+            <AlertTriangle size={18} aria-hidden="true" />
+            <div>
+              <span>{recoveryAlertLabel}</span>
+              <strong>{recoveryAlertMessage}</strong>
+            </div>
+          </div>
+        )}
+
+        <ol className="run-log-list" aria-label="自动更新长跑日志">
+          {isRecoveryRunning && (
+            <li className="tone-info">
+              <span aria-hidden="true" />
+              <div>
+                <strong>自动恢复长跑进行中</strong>
+                <p>已提交给漫画控，等待本轮结果返回</p>
+              </div>
+            </li>
+          )}
+          {recoverySnapshot.hiddenEntries > 0 && (
+            <li className="tone-info run-log-hidden">
+              <span aria-hidden="true" />
+              <div>
+                <strong>已折叠较早日志 {recoverySnapshot.hiddenEntries} 条</strong>
+                <p>当前仅显示最近 {recoverySnapshot.entries.length} 条</p>
+              </div>
+            </li>
+          )}
+          {recoverySnapshot.entries.length === 0 && !isRecoveryRunning && (
+            <li className="tone-info">
+              <span aria-hidden="true" />
+              <div>
+                <strong>尚未开始长跑</strong>
+                <p>等待执行自动恢复更新全部</p>
+              </div>
+            </li>
+          )}
+          {recoverySnapshot.entries.map((entry, index) => (
+            <li className={`tone-${entry.tone}`} key={`${entry.title}-${index}`}>
+              <span aria-hidden="true" />
+              <div>
+                <strong>{entry.title}</strong>
+                <p>{entry.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        {recoveryAttention && (
+          <div className="recovery-actions">
+            <strong>恢复建议</strong>
+            <div>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={handleRestart}
+                disabled={busyAction === "restart"}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                恢复：重启漫画控
+              </button>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={handleScanFavoritesUpdates}
+                disabled={busyAction === "favorites-updates"}
+              >
+                <ScanSearch size={16} aria-hidden="true" />
+                恢复：扫描收藏
+              </button>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={handleTriggerAllFavoriteUpdatesWithRecovery}
+                disabled={busyAction === "trigger-all-favorite-updates-recovery"}
+              >
+                <MousePointerClick size={16} aria-hidden="true" />
+                恢复：重跑长跑
+              </button>
+            </div>
+          </div>
+        )}
+
+      </section>
+
       <div className="run-state">
         <RefreshCw size={18} aria-hidden="true" />
         <span>下一次检查：手动触发或漫画控文件更新</span>
@@ -742,4 +973,18 @@ export function AutomationView({
       </div>
     </section>
   );
+}
+
+function appendRecoveryEvent(
+  currentEvents: FavoriteUpdateRecoveryEvent[],
+  event: FavoriteUpdateRecoveryEvent,
+) {
+  return [...currentEvents, event];
+}
+
+function isLiveRecoveryErrorVisible(
+  event: FavoriteUpdateRecoveryEvent | undefined,
+  result: RecoveringFavoriteUpdateResult | undefined,
+) {
+  return event !== undefined && result === undefined;
 }

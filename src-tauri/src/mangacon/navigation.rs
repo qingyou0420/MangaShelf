@@ -165,6 +165,48 @@ pub struct TriggerFavoriteUpdateBatchResult {
     pub items: Vec<TriggerNextFavoriteUpdateDownloadResult>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FavoriteUpdateProgressKind {
+    ComicDownloaded,
+    ComicSkipped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FavoriteUpdateProgress {
+    pub kind: FavoriteUpdateProgressKind,
+    pub processed: u32,
+    pub downloaded_chapters: u32,
+    pub skipped_count: u32,
+    pub chapter_delta: u32,
+}
+
+impl FavoriteUpdateProgress {
+    fn comic_downloaded(
+        processed: u32,
+        downloaded_chapters: u32,
+        skipped_count: u32,
+        chapter_delta: u32,
+    ) -> Self {
+        Self {
+            kind: FavoriteUpdateProgressKind::ComicDownloaded,
+            processed,
+            downloaded_chapters,
+            skipped_count,
+            chapter_delta,
+        }
+    }
+
+    fn comic_skipped(processed: u32, downloaded_chapters: u32, skipped_count: u32) -> Self {
+        Self {
+            kind: FavoriteUpdateProgressKind::ComicSkipped,
+            processed,
+            downloaded_chapters,
+            skipped_count,
+            chapter_delta: 0,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum NavigationError {
     #[error(transparent)]
@@ -526,19 +568,36 @@ pub fn trigger_favorite_update_batch(
     max_updates: Option<u32>,
 ) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
     let requested_limit = favorite_update_batch_limit(max_updates);
-    trigger_favorite_update_loop(requested_limit)
+    let mut progress_sink = |_progress: FavoriteUpdateProgress| {};
+    trigger_favorite_update_loop(requested_limit, &mut progress_sink)
 }
 
 pub fn trigger_all_favorite_updates(
     max_comics: Option<u32>,
 ) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
     let requested_limit = favorite_update_all_limit(max_comics);
-    trigger_favorite_update_loop(requested_limit)
+    let mut progress_sink = |_progress: FavoriteUpdateProgress| {};
+    trigger_favorite_update_loop(requested_limit, &mut progress_sink)
 }
 
-fn trigger_favorite_update_loop(
+pub fn trigger_all_favorite_updates_with_progress<F>(
+    max_comics: Option<u32>,
+    progress_sink: &mut F,
+) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError>
+where
+    F: FnMut(FavoriteUpdateProgress),
+{
+    let requested_limit = favorite_update_all_limit(max_comics);
+    trigger_favorite_update_loop(requested_limit, progress_sink)
+}
+
+fn trigger_favorite_update_loop<F>(
     requested_limit: u32,
-) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError> {
+    progress_sink: &mut F,
+) -> Result<TriggerFavoriteUpdateBatchResult, NavigationError>
+where
+    F: FnMut(FavoriteUpdateProgress),
+{
     let mut items = Vec::new();
     let mut skipped = Vec::new();
     let mut attempted_targets = Vec::new();
@@ -567,17 +626,29 @@ fn trigger_favorite_update_loop(
                 reason: FavoriteUpdateSkipReason::DetailNoUpdateBadge,
             });
             return_to_favorites_from_detail()?;
+            progress_sink(FavoriteUpdateProgress::comic_skipped(
+                items.len() as u32,
+                downloaded_chapters,
+                skipped.len() as u32,
+            ));
             continue;
         };
 
         attempted_targets.push(attempted_target);
-        downloaded_chapters += download_batch.processed;
+        let chapter_delta = download_batch.processed;
+        downloaded_chapters += chapter_delta;
         items.push(TriggerNextFavoriteUpdateDownloadResult {
             comic,
             download,
             download_batch,
         });
         return_to_favorites_from_detail()?;
+        progress_sink(FavoriteUpdateProgress::comic_downloaded(
+            items.len() as u32,
+            downloaded_chapters,
+            skipped.len() as u32,
+            chapter_delta,
+        ));
     }
 
     Ok(TriggerFavoriteUpdateBatchResult {

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  FAVORITE_UPDATE_RECOVERY_EVENT,
   findMangaConWindows,
   getAutomationStatus,
   importFavorites,
+  listenFavoriteUpdateRecoveryEvents,
   launchMangaCon,
   openFirstUpdatedComic,
   openMangaConFavorites,
@@ -22,13 +24,22 @@ const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
 
+const { listenMock } = vi.hoisted(() => ({
+  listenMock: vi.fn(),
+}));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: listenMock,
 }));
 
 describe("importFavorites", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    listenMock.mockReset();
   });
 
   it("调用 Rust import_favorites command 并返回导入摘要", async () => {
@@ -483,6 +494,7 @@ describe("importFavorites", () => {
       skippedCount: 3,
       stoppedReason: "completed",
       lastError: null,
+      events: [],
       runs: [],
     });
 
@@ -508,5 +520,40 @@ describe("importFavorites", () => {
       downloadedChapters: 520,
       stoppedReason: "completed",
     });
+  });
+
+  it("监听自动恢复长跑实时事件", async () => {
+    const unlisten = vi.fn();
+    const handler = vi.fn();
+    listenMock.mockResolvedValue(unlisten);
+
+    const result = await listenFavoriteUpdateRecoveryEvents(handler);
+
+    expect(listenMock).toHaveBeenCalledWith(
+      FAVORITE_UPDATE_RECOVERY_EVENT,
+      expect.any(Function),
+    );
+
+    const tauriHandler = listenMock.mock.calls[0][1];
+    tauriHandler({
+      payload: {
+        kind: "started",
+        message: "开始自动恢复长跑，目标 500 本",
+        processed: 0,
+        downloadedChapters: 0,
+        skippedCount: 0,
+        restarts: 0,
+      },
+    });
+
+    expect(handler).toHaveBeenCalledWith({
+      kind: "started",
+      message: "开始自动恢复长跑，目标 500 本",
+      processed: 0,
+      downloadedChapters: 0,
+      skippedCount: 0,
+      restarts: 0,
+    });
+    expect(result).toBe(unlisten);
   });
 });

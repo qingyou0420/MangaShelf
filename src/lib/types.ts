@@ -149,6 +149,25 @@ export type FavoriteUpdateRecoveryStoppedReason =
   | "completed"
   | "restart_limit_reached";
 
+export type FavoriteUpdateRecoveryEventKind =
+  | "started"
+  | "run_completed"
+  | "comic_downloaded"
+  | "comic_skipped"
+  | "error"
+  | "restarted"
+  | "completed"
+  | "restart_limit_reached";
+
+export interface FavoriteUpdateRecoveryEvent {
+  kind: FavoriteUpdateRecoveryEventKind;
+  message: string;
+  processed: number;
+  downloadedChapters: number;
+  skippedCount: number;
+  restarts: number;
+}
+
 export interface RecoveringFavoriteUpdateResult {
   requestedLimit: number;
   maxRestarts: number;
@@ -158,6 +177,7 @@ export interface RecoveringFavoriteUpdateResult {
   skippedCount: number;
   stoppedReason: FavoriteUpdateRecoveryStoppedReason;
   lastError: string | null;
+  events: FavoriteUpdateRecoveryEvent[];
   runs: TriggerFavoriteUpdateBatchResult[];
 }
 
