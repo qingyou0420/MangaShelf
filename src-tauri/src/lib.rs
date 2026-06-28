@@ -21,12 +21,8 @@ use crate::{
     favorites::import_mangacon_favorites,
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
-        confirm::{
-            confirm_continue_download_dialog, ContinueDownloadConfirmResult,
-        },
-        database::{
-            queue_all_badged_updates, QueueMangaConUpdatesResult, QueuedMangaConTask,
-        },
+        confirm::{confirm_continue_download_dialog, ContinueDownloadConfirmResult},
+        database::{queue_all_badged_updates, QueueMangaConUpdatesResult, QueuedMangaConTask},
         navigation::{
             favorite_update_all_limit, open_favorites_from_home as open_mangacon_favorites_inner,
             open_first_badged_comic_from_favorites as open_first_updated_comic_inner,

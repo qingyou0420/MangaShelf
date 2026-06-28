@@ -54,7 +54,9 @@ pub fn queue_all_badged_updates(
     let mut next_order_index = next_task_order_index(&transaction)?;
     let mut tasks = Vec::new();
     let mut skipped_existing = 0;
-    let limit = max_updates.map(|value| value as usize).unwrap_or(usize::MAX);
+    let limit = max_updates
+        .map(|value| value as usize)
+        .unwrap_or(usize::MAX);
 
     for candidate in candidates.iter().take(limit) {
         if task_already_exists(&transaction, &candidate.uri, &candidate.volume_key)? {
