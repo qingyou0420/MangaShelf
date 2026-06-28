@@ -13,9 +13,19 @@ interface DashboardProps {
   paths: CompanionPaths;
   favorites: MangaConFavorite[];
   pendingTasks: number;
+  importMessage?: string;
+  isImporting?: boolean;
+  onImportFavorites?: () => void;
 }
 
-export function Dashboard({ paths, favorites, pendingTasks }: DashboardProps) {
+export function Dashboard({
+  paths,
+  favorites,
+  pendingTasks,
+  importMessage,
+  isImporting = false,
+  onImportFavorites,
+}: DashboardProps) {
   const localCount = favorites.filter((item) => item.localPath).length;
   const pendingUpdates = favorites.filter(
     (item) => item.scanStatus === "pending" || item.scanStatus === "missing",
@@ -36,6 +46,15 @@ export function Dashboard({ paths, favorites, pendingTasks }: DashboardProps) {
           <RefreshCw size={18} aria-hidden="true" />
           一键更新收藏
         </button>
+        <button
+          className="secondary-action"
+          type="button"
+          onClick={onImportFavorites}
+          disabled={isImporting}
+        >
+          <Database size={18} aria-hidden="true" />
+          导入漫画控收藏
+        </button>
       </div>
 
       <div className="metric-grid" aria-label="概览统计">
@@ -44,6 +63,7 @@ export function Dashboard({ paths, favorites, pendingTasks }: DashboardProps) {
           label="收藏"
           value={favorites.length.toString()}
           detail="来自漫画控收藏导入"
+          ariaLabel="收藏统计"
         />
         <MetricCard
           icon={<FolderOpen size={20} aria-hidden="true" />}
@@ -84,6 +104,10 @@ export function Dashboard({ paths, favorites, pendingTasks }: DashboardProps) {
               <dt>书架根目录</dt>
               <dd>{paths.bookshelfRoot}</dd>
             </div>
+            <div>
+              <dt>本地数据库</dt>
+              <dd>{paths.databasePath}</dd>
+            </div>
           </dl>
         </section>
 
@@ -97,7 +121,7 @@ export function Dashboard({ paths, favorites, pendingTasks }: DashboardProps) {
             <span>已记录图片页</span>
           </div>
           <p className="muted">
-            当前样本用于验证导入、匹配和阅读器入口，后续会接入真实数据库。
+            {importMessage ?? "导入漫画控收藏后，这里会显示真实书架匹配统计。"}
           </p>
         </section>
       </div>
@@ -110,11 +134,12 @@ interface MetricCardProps {
   label: string;
   value: string;
   detail: string;
+  ariaLabel?: string;
 }
 
-function MetricCard({ icon, label, value, detail }: MetricCardProps) {
+function MetricCard({ icon, label, value, detail, ariaLabel }: MetricCardProps) {
   return (
-    <article className="metric-card">
+    <article className="metric-card" aria-label={ariaLabel}>
       <div className="metric-icon">{icon}</div>
       <div>
         <p>{label}</p>

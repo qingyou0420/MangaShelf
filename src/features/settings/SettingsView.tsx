@@ -36,6 +36,11 @@ export function SettingsView({ paths }: SettingsViewProps) {
           label="书架目录"
           value={paths.bookshelfRoot}
         />
+        <PathRow
+          icon={<HardDrive size={20} aria-hidden="true" />}
+          label="本地数据库"
+          value={paths.databasePath}
+        />
       </section>
     </section>
   );

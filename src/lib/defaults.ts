@@ -4,6 +4,7 @@ export const approvedDefaultPaths: CompanionPaths = {
   mangaConExecutable: "E:\\漫画控\\MangaCon.exe",
   mangaConFavoritesJson: "E:\\漫画控\\20260528184624.mc3db.json",
   bookshelfRoot: "E:\\书架",
+  databasePath: "E:\\书架\\mangacon-companion.sqlite",
 };
 
 export const sampleFavorite: MangaConFavorite = {

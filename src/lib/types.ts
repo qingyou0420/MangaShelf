@@ -2,6 +2,7 @@ export interface CompanionPaths {
   mangaConExecutable: string;
   mangaConFavoritesJson: string;
   bookshelfRoot: string;
+  databasePath: string;
 }
 
 export interface MangaConFavorite {

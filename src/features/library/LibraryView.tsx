@@ -12,7 +12,7 @@ export function LibraryView({ favorites }: LibraryViewProps) {
         <div>
           <p className="section-kicker">收藏书库</p>
           <h1 id="library-title">导入收藏</h1>
-          <p className="view-subtitle">使用 fixture 数据预览收藏卡片和匹配状态。</p>
+          <p className="view-subtitle">查看漫画控收藏和本地书架匹配状态。</p>
         </div>
         <button className="secondary-action" type="button">
           <ListFilter size={18} aria-hidden="true" />
@@ -40,8 +40,11 @@ export function LibraryView({ favorites }: LibraryViewProps) {
               </div>
             </div>
             <div className="library-meta">
-              <span>{favorite.scanStatus === "pending" ? "待扫描" : "已处理"}</span>
+              <span>{favoriteStatusLabel(favorite)}</span>
               <small>{favorite.sourceUri}</small>
+              {favorite.localPath && (
+                <small>{`本地 ${favorite.chapterCount} 章 / ${favorite.imageCount} 页`}</small>
+              )}
             </div>
           </article>
         ))}
@@ -53,4 +56,16 @@ export function LibraryView({ favorites }: LibraryViewProps) {
       </div>
     </section>
   );
+}
+
+function favoriteStatusLabel(favorite: MangaConFavorite) {
+  if (favorite.localPath) {
+    return "已匹配本地";
+  }
+
+  if (favorite.scanStatus === "missing") {
+    return "缺少本地目录";
+  }
+
+  return favorite.scanStatus === "pending" ? "待扫描" : "已处理";
 }

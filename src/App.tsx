@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   BookOpen,
   Bot,
@@ -13,7 +13,9 @@ import { Dashboard } from "./features/dashboard/Dashboard";
 import { LibraryView } from "./features/library/LibraryView";
 import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
-import { approvedDefaultPaths, sampleFavorite } from "./lib/defaults";
+import { importFavorites } from "./lib/api";
+import { approvedDefaultPaths } from "./lib/defaults";
+import type { MangaConFavorite } from "./lib/types";
 
 type AppSection = "dashboard" | "library" | "automation" | "reader" | "settings";
 
@@ -31,7 +33,29 @@ const navigation: Array<{
 
 function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("dashboard");
-  const favorites = useMemo(() => [sampleFavorite], []);
+  const [favorites, setFavorites] = useState<MangaConFavorite[]>([]);
+  const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
+  const [isImporting, setIsImporting] = useState(false);
+
+  async function handleImportFavorites() {
+    setIsImporting(true);
+    setImportMessage("正在导入漫画控收藏并扫描书架...");
+    try {
+      const summary = await importFavorites({
+        favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
+        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
+        databasePath: approvedDefaultPaths.databasePath,
+      });
+      setFavorites(summary.favorites);
+      setImportMessage(
+        `已导入 ${summary.imported} 条收藏，匹配 ${summary.matched} 本本地漫画`,
+      );
+    } catch (cause) {
+      setImportMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsImporting(false);
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -62,7 +86,7 @@ function App() {
 
         <div className="sidebar-footer">
           <span>状态</span>
-          <strong>本地预览</strong>
+          <strong>{importMessage}</strong>
         </div>
       </aside>
 
@@ -72,6 +96,9 @@ function App() {
             paths={approvedDefaultPaths}
             favorites={favorites}
             pendingTasks={3}
+            importMessage={importMessage}
+            isImporting={isImporting}
+            onImportFavorites={handleImportFavorites}
           />
         )}
         {activeSection === "library" && <LibraryView favorites={favorites} />}
