@@ -15,6 +15,7 @@ interface DashboardProps {
   pendingTasks: number;
   importMessage?: string;
   isImporting?: boolean;
+  isUpdating?: boolean;
   onImportFavorites?: () => void;
   onUpdateFavorites?: () => void;
 }
@@ -25,6 +26,7 @@ export function Dashboard({
   pendingTasks,
   importMessage,
   isImporting = false,
+  isUpdating = false,
   onImportFavorites,
   onUpdateFavorites,
 }: DashboardProps) {
@@ -44,7 +46,12 @@ export function Dashboard({
             管理漫画控收藏、书架匹配和阅读准备任务。
           </p>
         </div>
-        <button className="primary-action" type="button" onClick={onUpdateFavorites}>
+        <button
+          className="primary-action"
+          type="button"
+          onClick={onUpdateFavorites}
+          disabled={isUpdating}
+        >
           <RefreshCw size={18} aria-hidden="true" />
           一键更新收藏
         </button>
@@ -77,7 +84,7 @@ export function Dashboard({
           icon={<DownloadCloud size={20} aria-hidden="true" />}
           label="待处理更新"
           value={pendingUpdates.toString()}
-          detail="等待扫描或补全"
+          detail="数据库队列"
         />
         <MetricCard
           icon={<Activity size={20} aria-hidden="true" />}
@@ -101,6 +108,10 @@ export function Dashboard({
             <div>
               <dt>收藏快照</dt>
               <dd>{paths.mangaConFavoritesJson}</dd>
+            </div>
+            <div>
+              <dt>漫画控数据库</dt>
+              <dd>{paths.mangaConDatabase}</dd>
             </div>
             <div>
               <dt>书架根目录</dt>

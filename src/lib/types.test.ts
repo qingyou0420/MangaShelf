@@ -6,6 +6,8 @@ describe("shared MangaCon companion types", () => {
     expect(approvedDefaultPaths).toEqual({
       mangaConExecutable: "E:\\漫画控\\MangaCon.exe",
       mangaConFavoritesJson: "E:\\漫画控\\20260528184624.mc3db.json",
+      mangaConDatabase:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
       bookshelfRoot: "E:\\书架",
       databasePath: "E:\\书架\\mangacon-companion.sqlite",
     });

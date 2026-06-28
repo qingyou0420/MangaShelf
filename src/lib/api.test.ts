@@ -9,6 +9,7 @@ import {
   launchMangaCon,
   openFirstUpdatedComic,
   openMangaConFavorites,
+  queueMangaConUpdates,
   restartMangaCon,
   scanDetailUpdates,
   scanFavoritesUpdates,
@@ -561,6 +562,39 @@ describe("importFavorites", () => {
       processed: 447,
       downloadedChapters: 520,
       stoppedReason: "completed",
+    });
+  });
+
+  it("封装漫画控 SQLite 队列更新 command", async () => {
+    invokeMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-1",
+      totalUpdates: 34,
+      queued: 33,
+      skippedExisting: 1,
+      launched: true,
+      confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
+      tasks: [],
+    });
+
+    const result = await queueMangaConUpdates({
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+      maxUpdates: 500,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("queue_mangacon_updates", {
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+      maxUpdates: 500,
+    });
+    expect(result).toMatchObject({
+      totalUpdates: 34,
+      queued: 33,
+      skippedExisting: 1,
+      launched: true,
     });
   });
 

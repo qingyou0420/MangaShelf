@@ -38,6 +38,11 @@ export function SettingsView({ paths }: SettingsViewProps) {
         />
         <PathRow
           icon={<HardDrive size={20} aria-hidden="true" />}
+          label="漫画控数据库"
+          value={paths.mangaConDatabase}
+        />
+        <PathRow
+          icon={<HardDrive size={20} aria-hidden="true" />}
           label="本地数据库"
           value={paths.databasePath}
         />

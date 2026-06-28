@@ -6,6 +6,7 @@ import {
   importFavorites,
   listChapterPages,
   listenFavoriteUpdateRecoveryEvents,
+  queueMangaConUpdates,
   scanLocalChapters,
   triggerAllFavoriteUpdatesWithRecovery,
 } from "./lib/api";
@@ -21,6 +22,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
   importFavorites: vi.fn(),
   listChapterPages: vi.fn(),
   listenFavoriteUpdateRecoveryEvents: vi.fn(),
+  queueMangaConUpdates: vi.fn(),
   scanLocalChapters: vi.fn(),
   triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
 }));
@@ -31,6 +33,7 @@ const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
   listenFavoriteUpdateRecoveryEvents,
 );
 const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
+const queueMangaConUpdatesMock = vi.mocked(queueMangaConUpdates);
 const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
   triggerAllFavoriteUpdatesWithRecovery,
 );
@@ -40,6 +43,7 @@ describe("App", () => {
     importFavoritesMock.mockReset();
     listChapterPagesMock.mockReset();
     listenFavoriteUpdateRecoveryEventsMock.mockReset();
+    queueMangaConUpdatesMock.mockReset();
     scanLocalChaptersMock.mockReset();
     triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
   });
@@ -160,35 +164,32 @@ describe("App", () => {
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
   });
 
-  it("从仪表盘一键更新收藏会进入自动化长跑并调用恢复式全量更新", async () => {
+  it("从仪表盘一键更新收藏会写入漫画控数据库队列", async () => {
     const user = userEvent.setup();
-    const unlisten = vi.fn();
-    listenFavoriteUpdateRecoveryEventsMock.mockResolvedValue(unlisten);
-    triggerAllFavoriteUpdatesWithRecoveryMock.mockResolvedValue({
-      requestedLimit: 500,
-      maxRestarts: 2,
-      restarts: 0,
-      processed: 0,
-      downloadedChapters: 0,
-      skippedCount: 0,
-      stoppedReason: "completed",
-      lastError: null,
-      events: [],
-      runs: [],
+    queueMangaConUpdatesMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-1",
+      totalUpdates: 34,
+      queued: 33,
+      skippedExisting: 1,
+      launched: true,
+      confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
+      tasks: [],
     });
 
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "一键更新收藏" }));
 
-    expect(await screen.findByRole("heading", { name: "等待漫画控刷新收藏更新..." })).toBeInTheDocument();
     await waitFor(() => {
-      expect(triggerAllFavoriteUpdatesWithRecoveryMock).toHaveBeenCalledWith({
+      expect(queueMangaConUpdatesMock).toHaveBeenCalledWith({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
         executablePath: approvedDefaultPaths.mangaConExecutable,
-        maxComics: 500,
-        maxRestarts: 2,
+        maxUpdates: 500,
       });
     });
-    expect(unlisten).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getAllByText("已加入漫画控下载队列 33 话，跳过已有任务 1 话").length,
+    ).toBeGreaterThan(0);
   });
 });

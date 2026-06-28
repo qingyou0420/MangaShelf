@@ -21,6 +21,12 @@ use crate::{
     favorites::import_mangacon_favorites,
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
+        confirm::{
+            confirm_continue_download_dialog, ContinueDownloadConfirmResult,
+        },
+        database::{
+            queue_all_badged_updates, QueueMangaConUpdatesResult, QueuedMangaConTask,
+        },
         navigation::{
             favorite_update_all_limit, open_favorites_from_home as open_mangacon_favorites_inner,
             open_first_badged_comic_from_favorites as open_first_updated_comic_inner,
@@ -49,6 +55,8 @@ use std::{path::PathBuf, thread, time::Duration};
 const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
 const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
 const MANGACON_RECOVERY_REFRESH_WAIT_MS: u64 = 12_000;
+const MANGACON_CONTINUE_CONFIRM_ATTEMPTS: u32 = 24;
+const MANGACON_CONTINUE_CONFIRM_WAIT_MS: u64 = 250;
 const FAVORITE_UPDATE_RECOVERY_EVENT: &str = "favorite-update-recovery-event";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +232,19 @@ pub struct RecoveringFavoriteUpdateResult {
     pub runs: Vec<TriggerFavoriteUpdateBatchResult>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueMangaConUpdatesCommandResult {
+    pub backup_path: String,
+    pub total_updates: usize,
+    pub queued: usize,
+    pub skipped_existing: usize,
+    pub launched: bool,
+    pub launch_pid: Option<u32>,
+    pub confirm: ContinueDownloadConfirmResult,
+    pub tasks: Vec<QueuedMangaConTask>,
+}
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -343,6 +364,49 @@ fn trigger_all_favorite_updates_with_recovery(
         max_restarts,
         &mut event_sink,
     )
+}
+
+#[tauri::command]
+fn queue_mangacon_updates(
+    manga_con_database_path: String,
+    executable_path: String,
+    max_updates: Option<u32>,
+) -> Result<QueueMangaConUpdatesCommandResult, String> {
+    let queue = queue_all_badged_updates(manga_con_database_path, max_updates)
+        .map_err(|err| err.to_string())?;
+    let (launched, launch_pid, confirm) = if queue.queued > 0 {
+        let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
+        let confirm = confirm_continue_download_dialog_with_wait()?;
+        (true, Some(launch.pid), confirm)
+    } else {
+        (
+            false,
+            None,
+            ContinueDownloadConfirmResult {
+                found: false,
+                clicked: false,
+                dialog_title: None,
+            },
+        )
+    };
+
+    let QueueMangaConUpdatesResult {
+        backup_path,
+        total_updates,
+        queued,
+        skipped_existing,
+        tasks,
+    } = queue;
+    Ok(QueueMangaConUpdatesCommandResult {
+        backup_path,
+        total_updates,
+        queued,
+        skipped_existing,
+        launched,
+        launch_pid,
+        confirm,
+        tasks,
+    })
 }
 
 fn import_favorites_inner(
@@ -619,6 +683,23 @@ fn favorite_update_recovery_restart_limit(max_restarts: Option<u32>) -> u32 {
         .clamp(0, FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS)
 }
 
+fn confirm_continue_download_dialog_with_wait() -> Result<ContinueDownloadConfirmResult, String> {
+    let mut last_result = ContinueDownloadConfirmResult {
+        found: false,
+        clicked: false,
+        dialog_title: None,
+    };
+    for _ in 0..MANGACON_CONTINUE_CONFIRM_ATTEMPTS {
+        let result = confirm_continue_download_dialog().map_err(|err| err.to_string())?;
+        if result.clicked || result.found {
+            return Ok(result);
+        }
+        last_result = result;
+        thread::sleep(Duration::from_millis(MANGACON_CONTINUE_CONFIRM_WAIT_MS));
+    }
+    Ok(last_result)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -642,7 +723,8 @@ pub fn run() {
             trigger_next_favorite_update_download,
             trigger_favorite_update_batch,
             trigger_all_favorite_updates,
-            trigger_all_favorite_updates_with_recovery
+            trigger_all_favorite_updates_with_recovery,
+            queue_mangacon_updates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

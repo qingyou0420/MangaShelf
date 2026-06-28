@@ -1,6 +1,7 @@
 export interface CompanionPaths {
   mangaConExecutable: string;
   mangaConFavoritesJson: string;
+  mangaConDatabase: string;
   bookshelfRoot: string;
   databasePath: string;
 }
@@ -193,6 +194,35 @@ export interface RecoveringFavoriteUpdateResult {
   lastError: string | null;
   events: FavoriteUpdateRecoveryEvent[];
   runs: TriggerFavoriteUpdateBatchResult[];
+}
+
+export interface QueuedMangaConTask {
+  mangaId: number;
+  volumeId: number;
+  manga: string;
+  uri: string;
+  volumeKey: string;
+  title: string;
+  location: string;
+  extra: string;
+  orderIndex: number;
+}
+
+export interface ContinueDownloadConfirmResult {
+  found: boolean;
+  clicked: boolean;
+  dialogTitle: string | null;
+}
+
+export interface QueueMangaConUpdatesResult {
+  backupPath: string;
+  totalUpdates: number;
+  queued: number;
+  skippedExisting: number;
+  launched: boolean;
+  launchPid?: number | null;
+  confirm: ContinueDownloadConfirmResult;
+  tasks: QueuedMangaConTask[];
 }
 
 export interface LaunchMangaConResult {

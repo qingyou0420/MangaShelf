@@ -13,7 +13,7 @@ import { Dashboard } from "./features/dashboard/Dashboard";
 import { LibraryView } from "./features/library/LibraryView";
 import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
-import { importFavorites } from "./lib/api";
+import { importFavorites, queueMangaConUpdates } from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
 import type { MangaConFavorite } from "./lib/types";
 
@@ -38,6 +38,8 @@ function App() {
   const [favoriteUpdateStartToken, setFavoriteUpdateStartToken] = useState<number>();
   const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
   const [isImporting, setIsImporting] = useState(false);
+  const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
+  const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
 
   async function handleImportFavorites() {
     setIsImporting(true);
@@ -71,10 +73,26 @@ function App() {
     setActiveSection("reader");
   }
 
-  function handleUpdateFavorites() {
-    setImportMessage("已进入自动化，正在一键更新收藏...");
-    setFavoriteUpdateStartToken((token) => (token ?? 0) + 1);
-    setActiveSection("automation");
+  async function handleUpdateFavorites() {
+    setIsUpdatingFavorites(true);
+    setImportMessage("正在写入漫画控数据库队列...");
+    try {
+      const result = await queueMangaConUpdates({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+        maxUpdates: 500,
+      });
+      setQueuedUpdateCount(result.queued);
+      setImportMessage(
+        result.queued > 0
+          ? `已加入漫画控下载队列 ${result.queued} 话，跳过已有任务 ${result.skippedExisting} 话`
+          : `没有新的待加入任务，跳过已有任务 ${result.skippedExisting} 话`,
+      );
+    } catch (cause) {
+      setImportMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsUpdatingFavorites(false);
+    }
   }
 
   return (
@@ -115,9 +133,10 @@ function App() {
           <Dashboard
             paths={approvedDefaultPaths}
             favorites={favorites}
-            pendingTasks={3}
+            pendingTasks={queuedUpdateCount}
             importMessage={importMessage}
             isImporting={isImporting}
+            isUpdating={isUpdatingFavorites}
             onImportFavorites={handleImportFavorites}
             onUpdateFavorites={handleUpdateFavorites}
           />
