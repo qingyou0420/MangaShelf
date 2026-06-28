@@ -194,56 +194,15 @@ impl CompanionDatabase {
     }
 
     pub fn upsert_comic(&self, comic: &Comic) -> Result<()> {
-        let local_path = comic
-            .local_path
-            .as_ref()
-            .map(|path| path_to_string_lossy(path.as_path()));
-        self.connection.execute(
-            r#"
-            INSERT INTO comics (
-                id, name, location, source_uri, source_scheme, source_domain, local_path,
-                chapter_count, image_count, read_progress_page, scan_status, updated_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                location = excluded.location,
-                source_uri = excluded.source_uri,
-                source_scheme = excluded.source_scheme,
-                source_domain = excluded.source_domain,
-                local_path = excluded.local_path,
-                chapter_count = excluded.chapter_count,
-                image_count = excluded.image_count,
-                read_progress_page = excluded.read_progress_page,
-                scan_status = excluded.scan_status,
-                updated_at = CURRENT_TIMESTAMP
-            "#,
-            params![
-                comic.id,
-                comic.name,
-                comic.location,
-                comic.source_uri,
-                comic.source_scheme,
-                comic.source_domain,
-                local_path,
-                comic.chapter_count as i64,
-                comic.image_count as i64,
-                comic.read_progress_page as i64,
-                comic.scan_status.as_str(),
-            ],
-        )?;
+        upsert_comic_on(&self.connection, comic)
+    }
 
-        self.connection.execute(
-            "DELETE FROM comic_tags WHERE comic_id = ?1",
-            params![comic.id],
-        )?;
-        for tag in &comic.tags {
-            self.connection.execute(
-                "INSERT OR IGNORE INTO comic_tags (comic_id, tag) VALUES (?1, ?2)",
-                params![comic.id, tag],
-            )?;
+    pub fn upsert_comics(&mut self, comics: &[Comic]) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        for comic in comics {
+            upsert_comic_on(&transaction, comic)?;
         }
-
+        transaction.commit()?;
         Ok(())
     }
 
@@ -376,6 +335,60 @@ fn path_to_string_lossy(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+fn upsert_comic_on(connection: &Connection, comic: &Comic) -> Result<()> {
+    let local_path = comic
+        .local_path
+        .as_ref()
+        .map(|path| path_to_string_lossy(path.as_path()));
+    connection.execute(
+        r#"
+        INSERT INTO comics (
+            id, name, location, source_uri, source_scheme, source_domain, local_path,
+            chapter_count, image_count, read_progress_page, scan_status, updated_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            location = excluded.location,
+            source_uri = excluded.source_uri,
+            source_scheme = excluded.source_scheme,
+            source_domain = excluded.source_domain,
+            local_path = excluded.local_path,
+            chapter_count = excluded.chapter_count,
+            image_count = excluded.image_count,
+            read_progress_page = excluded.read_progress_page,
+            scan_status = excluded.scan_status,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+        params![
+            comic.id,
+            comic.name,
+            comic.location,
+            comic.source_uri,
+            comic.source_scheme,
+            comic.source_domain,
+            local_path,
+            comic.chapter_count as i64,
+            comic.image_count as i64,
+            comic.read_progress_page as i64,
+            comic.scan_status.as_str(),
+        ],
+    )?;
+
+    connection.execute(
+        "DELETE FROM comic_tags WHERE comic_id = ?1",
+        params![comic.id],
+    )?;
+    for tag in &comic.tags {
+        connection.execute(
+            "INSERT OR IGNORE INTO comic_tags (comic_id, tag) VALUES (?1, ?2)",
+            params![comic.id, tag],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,6 +508,40 @@ mod tests {
         db.upsert_comic(&mirror)
             .expect("same source_uri under different id should not conflict");
         assert_eq!(db.count_rows("comics").expect("comic count"), 2);
+    }
+
+    #[test]
+    fn bulk_comic_upsert_imports_many_comics_with_tags() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut db = CompanionDatabase::open(temp.path().join("state.sqlite")).expect("db open");
+        db.migrate().expect("migrate");
+
+        let mut first = Comic::from_mangacon_favorite(
+            "若世界處於黑夜",
+            "若世界處於黑夜",
+            "cp:ruoshijiechuyuheiye",
+            None,
+            vec!["むちまろ".to_string()],
+        );
+        first.scan_status = ScanStatus::Imported;
+        let mut second = Comic::from_mangacon_favorite(
+            "虚构推理",
+            "虚构推理",
+            "mhg:17165",
+            None,
+            vec!["城平京".to_string(), "片瀬茶柴".to_string()],
+        );
+        second.scan_status = ScanStatus::Imported;
+
+        db.upsert_comics(&[first, second])
+            .expect("bulk comic upsert");
+
+        let comics = db.list_comics().expect("list comics");
+        assert_eq!(comics.len(), 2);
+        assert!(comics
+            .iter()
+            .all(|comic| comic.scan_status == ScanStatus::Imported));
+        assert_eq!(db.count_rows("comic_tags").expect("tag count"), 3);
     }
 
     #[test]

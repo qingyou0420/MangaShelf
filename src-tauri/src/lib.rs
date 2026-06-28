@@ -245,13 +245,17 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn import_favorites(
+async fn import_favorites(
     favorites_json_path: Option<String>,
     bookshelf_root: Option<String>,
     database_path: String,
 ) -> Result<ImportSummary, String> {
-    import_favorites_inner(favorites_json_path, bookshelf_root, database_path)
-        .map_err(|err| err.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        import_favorites_inner(favorites_json_path, bookshelf_root, database_path)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -413,13 +417,13 @@ fn import_favorites_inner(
         .unwrap_or(defaults.mangacon_favorites_json);
 
     let mut comics = import_mangacon_favorites(favorites_path)?;
-    let db = CompanionDatabase::open(database_path)?;
+    let mut db = CompanionDatabase::open(database_path)?;
     db.migrate()?;
 
     for comic in &mut comics {
         comic.scan_status = domain::ScanStatus::Imported;
-        db.upsert_comic(comic)?;
     }
+    db.upsert_comics(&comics)?;
 
     Ok(ImportSummary {
         imported: comics.len(),
