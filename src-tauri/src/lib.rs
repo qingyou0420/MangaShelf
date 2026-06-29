@@ -21,7 +21,7 @@ use crate::{
     favorites::import_mangacon_favorites,
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
-        confirm::{confirm_continue_download_dialog, ContinueDownloadConfirmResult},
+        confirm::ContinueDownloadConfirmResult,
         database::{
             queue_updates_including_local_gaps, read_manga_cache_records, read_task_status,
             requeue_failed_tasks_for_repair, MangaConTaskStatus, QueueMangaConUpdatesResult,
@@ -60,8 +60,6 @@ use std::{
 const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
 const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
 const MANGACON_RECOVERY_REFRESH_WAIT_MS: u64 = 12_000;
-const MANGACON_CONTINUE_CONFIRM_ATTEMPTS: u32 = 24;
-const MANGACON_CONTINUE_CONFIRM_WAIT_MS: u64 = 250;
 const FAVORITE_UPDATE_RECOVERY_EVENT: &str = "favorite-update-recovery-event";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -379,8 +377,7 @@ fn repair_mangacon_failed_tasks(
         .map_err(|err| err.to_string())?;
     let (launched, launch_pid, confirm) = if repair.requeued > 0 {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        let confirm = confirm_continue_download_dialog_with_wait()?;
-        (true, Some(launch.pid), confirm)
+        (true, Some(launch.pid), database_auto_resume_confirm_result())
     } else {
         (
             false,
@@ -497,8 +494,7 @@ fn queue_mangacon_updates(
     let should_refresh_mangacon = queue.queued > 0 || queue.cleared_update_markers > 0;
     let (launched, launch_pid, confirm) = if should_refresh_mangacon {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        let confirm = confirm_continue_download_dialog_with_wait()?;
-        (true, Some(launch.pid), confirm)
+        (true, Some(launch.pid), database_auto_resume_confirm_result())
     } else {
         (
             false,
@@ -912,21 +908,12 @@ fn favorite_update_recovery_restart_limit(max_restarts: Option<u32>) -> u32 {
         .clamp(0, FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS)
 }
 
-fn confirm_continue_download_dialog_with_wait() -> Result<ContinueDownloadConfirmResult, String> {
-    let mut last_result = ContinueDownloadConfirmResult {
+fn database_auto_resume_confirm_result() -> ContinueDownloadConfirmResult {
+    ContinueDownloadConfirmResult {
         found: false,
         clicked: false,
-        dialog_title: None,
-    };
-    for _ in 0..MANGACON_CONTINUE_CONFIRM_ATTEMPTS {
-        let result = confirm_continue_download_dialog().map_err(|err| err.to_string())?;
-        if result.clicked || result.found {
-            return Ok(result);
-        }
-        last_result = result;
-        thread::sleep(Duration::from_millis(MANGACON_CONTINUE_CONFIRM_WAIT_MS));
+        dialog_title: Some("continue_last_session_tasks".to_string()),
     }
-    Ok(last_result)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

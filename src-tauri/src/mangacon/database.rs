@@ -8,6 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const CONTINUE_LAST_SESSION_TASKS_KEY: &str = "continue_last_session_tasks";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueuedMangaConTask {
@@ -164,6 +166,9 @@ pub fn queue_updates_including_local_gaps(
     for manga_id in affected_manga_ids {
         sync_badge_value(&transaction, manga_id)?;
     }
+    if !tasks.is_empty() || skipped_existing > 0 {
+        enable_continue_last_session_tasks(&transaction)?;
+    }
 
     transaction.commit()?;
     Ok(QueueMangaConUpdatesResult {
@@ -236,6 +241,9 @@ pub fn requeue_failed_tasks_for_repair(
             order_index: next_order_index,
         });
         next_order_index += 1;
+    }
+    if !tasks.is_empty() {
+        enable_continue_last_session_tasks(&transaction)?;
     }
 
     transaction.commit()?;
@@ -735,6 +743,18 @@ fn sync_badge_value(connection: &Connection, manga_id: i64) -> Result<()> {
     Ok(())
 }
 
+fn enable_continue_last_session_tasks(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS mc3_config(key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID",
+        [],
+    )?;
+    connection.execute(
+        "REPLACE INTO mc3_config(key, value) VALUES(?1, ?2)",
+        params![CONTINUE_LAST_SESSION_TASKS_KEY, "1"],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,6 +866,10 @@ mod tests {
             .expect("badge count");
         assert_eq!(volume_status, 0);
         assert_eq!(badge_count, 0);
+        assert_eq!(
+            read_config_value(&connection, "continue_last_session_tasks").as_deref(),
+            Some("1")
+        );
     }
 
     #[test]
@@ -1217,6 +1241,20 @@ mod tests {
         assert_eq!(row.0, None);
         assert_eq!(row.1, Some(10));
         assert_eq!(row.2, None);
+        assert_eq!(
+            read_config_value(&connection, "continue_last_session_tasks").as_deref(),
+            Some("1")
+        );
+    }
+
+    fn read_config_value(connection: &Connection, key: &str) -> Option<String> {
+        connection
+            .query_row(
+                "SELECT value FROM mc3_config WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .ok()
     }
 
     #[test]
