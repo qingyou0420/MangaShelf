@@ -715,6 +715,8 @@ describe("importFavorites", () => {
       failedTasks: 2,
       finishedTasks: 4,
       totalErrors: 3,
+      continueLastSessionTasks: true,
+      continueLastSessionTasksValue: "1",
     });
 
     const result = await getMangaConTaskStatus({
@@ -730,6 +732,8 @@ describe("importFavorites", () => {
       activeTasks: 1,
       failedTasks: 2,
       totalErrors: 3,
+      continueLastSessionTasks: true,
+      continueLastSessionTasksValue: "1",
     });
   });
 

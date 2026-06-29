@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -43,6 +43,8 @@ pub struct MangaConTaskStatus {
     pub failed_tasks: usize,
     pub finished_tasks: usize,
     pub total_errors: usize,
+    pub continue_last_session_tasks: Option<bool>,
+    pub continue_last_session_tasks_value: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +215,11 @@ pub fn read_task_status(database_path: impl AsRef<Path>) -> Result<MangaConTaskS
                 ))
             },
         )?;
+    let continue_last_session_tasks_value =
+        read_config_value_if_exists(&connection, CONTINUE_LAST_SESSION_TASKS_KEY)?;
+    let continue_last_session_tasks = continue_last_session_tasks_value
+        .as_deref()
+        .map(|value| matches!(value.trim(), "1" | "true" | "True" | "TRUE"));
 
     Ok(MangaConTaskStatus {
         total_tasks: total_tasks as usize,
@@ -220,6 +227,8 @@ pub fn read_task_status(database_path: impl AsRef<Path>) -> Result<MangaConTaskS
         failed_tasks: failed_tasks as usize,
         finished_tasks: finished_tasks as usize,
         total_errors: total_errors as usize,
+        continue_last_session_tasks,
+        continue_last_session_tasks_value,
     })
 }
 
@@ -712,6 +721,26 @@ fn task_already_exists(connection: &Connection, uri: &str, volume_key: &str) -> 
         |row| row.get(0),
     )?;
     Ok(count > 0)
+}
+
+fn read_config_value_if_exists(connection: &Connection, key: &str) -> Result<Option<String>> {
+    let has_config_table: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mc3_config')",
+        [],
+        |row| row.get::<_, i64>(0).map(|value| value != 0),
+    )?;
+    if !has_config_table {
+        return Ok(None);
+    }
+
+    let value = connection
+        .query_row(
+            "SELECT value FROM mc3_config WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(value)
 }
 
 fn clear_volume_update_marker(connection: &Connection, volume_id: i64) -> Result<usize> {
@@ -1221,6 +1250,33 @@ mod tests {
         assert_eq!(status.failed_tasks, 1);
         assert_eq!(status.finished_tasks, 2);
         assert_eq!(status.total_errors, 2);
+    }
+
+    #[test]
+    fn task_status_reports_database_resume_config() {
+        let (_temp, path) = create_fixture_db();
+        let connection = Connection::open(&path).expect("open");
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS mc3_config(key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID",
+                [],
+            )
+            .expect("config schema");
+        connection
+            .execute(
+                "REPLACE INTO mc3_config(key, value) VALUES('continue_last_session_tasks', '1')",
+                [],
+            )
+            .expect("config value");
+        drop(connection);
+
+        let status = read_task_status(&path).expect("task status");
+
+        assert_eq!(status.continue_last_session_tasks, Some(true));
+        assert_eq!(
+            status.continue_last_session_tasks_value.as_deref(),
+            Some("1")
+        );
     }
 
     #[test]

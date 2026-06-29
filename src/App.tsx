@@ -24,7 +24,11 @@ import {
   syncBookshelfMatches,
 } from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
-import type { EnsureMangaConRunningResult, MangaConFavorite } from "./lib/types";
+import type {
+  EnsureMangaConRunningResult,
+  MangaConFavorite,
+  MangaConTaskStatus,
+} from "./lib/types";
 
 type AppSection = "dashboard" | "library" | "automation" | "reader" | "settings";
 
@@ -60,7 +64,11 @@ function App() {
   const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
   const [isRepairingFailedTasks, setIsRepairingFailedTasks] = useState(false);
   const [isResumingUnfinishedTasks, setIsResumingUnfinishedTasks] = useState(false);
+  const [isRefreshingTaskStatus, setIsRefreshingTaskStatus] = useState(false);
   const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
+  const [mangaConTaskStatus, setMangaConTaskStatus] =
+    useState<MangaConTaskStatus>();
+  const [lastMangaConRestart, setLastMangaConRestart] = useState<string>();
   const mangaConReadyAtRef = useRef(0);
   const ensureMangaConPromiseRef =
     useRef<Promise<EnsureMangaConRunningResult> | null>(null);
@@ -209,6 +217,7 @@ function App() {
         maxUpdates: 500,
       });
       setQueuedUpdateCount(result.queued);
+      recordMangaConRestart(result.launched, result.launchPid);
       setImportMessage(
         result.queued > 0
           ? `已加入漫画控下载队列 ${result.queued} 话，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`
@@ -240,6 +249,7 @@ function App() {
       const status = await getMangaConTaskStatus({
         mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
       });
+      setMangaConTaskStatus(status);
       if (status.activeTasks > 0) {
         if (repairMonitorChecksRef.current < REPAIR_MONITOR_MAX_CHECKS) {
           setImportMessage(
@@ -267,6 +277,24 @@ function App() {
     await repairFailedTasks("manual");
   }
 
+  async function handleRefreshTaskStatus() {
+    setIsRefreshingTaskStatus(true);
+    try {
+      const status = await getMangaConTaskStatus({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+      });
+      setMangaConTaskStatus(status);
+      setQueuedUpdateCount(status.activeTasks);
+      setImportMessage(
+        `漫画控任务：未完成 ${status.activeTasks}，失败 ${status.failedTasks}，错误 ${status.totalErrors}`,
+      );
+    } catch (cause) {
+      setImportMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsRefreshingTaskStatus(false);
+    }
+  }
+
   async function handleResumeUnfinishedTasks() {
     setIsResumingUnfinishedTasks(true);
     setImportMessage("正在唤醒漫画控已有未完成下载任务...");
@@ -276,6 +304,8 @@ function App() {
         executablePath: approvedDefaultPaths.mangaConExecutable,
       });
       setQueuedUpdateCount(result.totalUnfinished);
+      recordMangaConRestart(result.launched, result.launchPid);
+      await handleRefreshTaskStatus();
       if (result.resumeConfigured) {
         setImportMessage(
           `已唤醒漫画控继续 ${result.totalUnfinished} 个未完成下载任务`,
@@ -303,6 +333,7 @@ function App() {
         maxTasks: REPAIR_MAX_TASKS,
       });
       setQueuedUpdateCount(result.requeued);
+      recordMangaConRestart(result.launched, result.launchPid);
       if (result.requeued > 0) {
         setImportMessage(
           `已将 ${result.requeued} 个失败任务重新加入漫画控修复队列`,
@@ -319,6 +350,12 @@ function App() {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setIsRepairingFailedTasks(false);
+    }
+  }
+
+  function recordMangaConRestart(launched: boolean, pid?: number | null) {
+    if (launched) {
+      setLastMangaConRestart(pid ? `已重启漫画控 PID ${pid}` : "已重启漫画控");
     }
   }
 
@@ -361,17 +398,21 @@ function App() {
             paths={approvedDefaultPaths}
             favorites={favorites}
             pendingTasks={queuedUpdateCount}
+            mangaConTaskStatus={mangaConTaskStatus}
+            lastMangaConRestart={lastMangaConRestart}
             importMessage={importMessage}
             isImporting={isImporting}
             isScanning={isScanningBookshelf}
             isUpdating={isUpdatingFavorites}
             isRepairing={isRepairingFailedTasks}
             isResuming={isResumingUnfinishedTasks}
+            isRefreshingTaskStatus={isRefreshingTaskStatus}
             onImportFavorites={handleImportFavorites}
             onScanBookshelf={syncBookshelfLibrary}
             onUpdateFavorites={handleUpdateFavorites}
             onRepairFailedTasks={handleRepairFailedTasks}
             onResumeUnfinishedTasks={handleResumeUnfinishedTasks}
+            onRefreshTaskStatus={handleRefreshTaskStatus}
           />
         )}
         {activeSection === "library" && (

@@ -8,40 +8,52 @@ import {
   RefreshCw,
   Wrench,
 } from "lucide-react";
-import type { CompanionPaths, MangaConFavorite } from "../../lib/types";
+import type {
+  CompanionPaths,
+  MangaConFavorite,
+  MangaConTaskStatus,
+} from "../../lib/types";
 
 interface DashboardProps {
   paths: CompanionPaths;
   favorites: MangaConFavorite[];
   pendingTasks: number;
+  mangaConTaskStatus?: MangaConTaskStatus;
+  lastMangaConRestart?: string;
   importMessage?: string;
   isImporting?: boolean;
   isScanning?: boolean;
   isUpdating?: boolean;
   isRepairing?: boolean;
   isResuming?: boolean;
+  isRefreshingTaskStatus?: boolean;
   onImportFavorites?: () => void;
   onScanBookshelf?: () => void;
   onUpdateFavorites?: () => void;
   onRepairFailedTasks?: () => void;
   onResumeUnfinishedTasks?: () => void;
+  onRefreshTaskStatus?: () => void;
 }
 
 export function Dashboard({
   paths,
   favorites,
   pendingTasks,
+  mangaConTaskStatus,
+  lastMangaConRestart,
   importMessage,
   isImporting = false,
   isScanning = false,
   isUpdating = false,
   isRepairing = false,
   isResuming = false,
+  isRefreshingTaskStatus = false,
   onImportFavorites,
   onScanBookshelf,
   onUpdateFavorites,
   onRepairFailedTasks,
   onResumeUnfinishedTasks,
+  onRefreshTaskStatus,
 }: DashboardProps) {
   const localCount = favorites.filter((item) => item.localPath).length;
   const pendingUpdates = favorites.filter((item) => item.hasUpdate).length;
@@ -139,8 +151,47 @@ export function Dashboard({
           <div className="panel-title-row">
             <CheckCircle2 size={20} aria-hidden="true" />
             <h2 id="mangacon-status-title">漫画控状态</h2>
+            <button
+              className="secondary-action compact-action"
+              type="button"
+              onClick={onRefreshTaskStatus}
+              disabled={isRefreshingTaskStatus}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+              刷新任务状态
+            </button>
+          </div>
+          <div className="task-status-grid" aria-label="漫画控任务状态">
+            <TaskStatusItem
+              label="总任务"
+              value={mangaConTaskStatus?.totalTasks ?? 0}
+            />
+            <TaskStatusItem
+              label="未完成"
+              value={mangaConTaskStatus?.activeTasks ?? 0}
+            />
+            <TaskStatusItem
+              label="失败"
+              value={mangaConTaskStatus?.failedTasks ?? 0}
+            />
+            <TaskStatusItem
+              label="已完成"
+              value={mangaConTaskStatus?.finishedTasks ?? 0}
+            />
+            <TaskStatusItem
+              label="错误数"
+              value={mangaConTaskStatus?.totalErrors ?? 0}
+            />
           </div>
           <dl className="status-list">
+            <div>
+              <dt>continue_last_session_tasks</dt>
+              <dd>{resumeConfigLabel(mangaConTaskStatus)}</dd>
+            </div>
+            <div>
+              <dt>最近重启</dt>
+              <dd>{lastMangaConRestart ?? "尚未由伴侣重启"}</dd>
+            </div>
             <div>
               <dt>程序路径</dt>
               <dd>{paths.mangaConExecutable}</dd>
@@ -179,6 +230,22 @@ export function Dashboard({
         </section>
       </div>
     </section>
+  );
+}
+
+function resumeConfigLabel(status?: MangaConTaskStatus) {
+  if (!status || status.continueLastSessionTasks == null) {
+    return "未知";
+  }
+  return status.continueLastSessionTasks ? "启用" : "关闭";
+}
+
+function TaskStatusItem({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="task-status-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 

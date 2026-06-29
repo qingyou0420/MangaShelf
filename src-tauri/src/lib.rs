@@ -12,8 +12,8 @@ use tauri::{AppHandle, Emitter};
 use crate::{
     automation::AutomationRunStatus,
     bookshelf::{
-        list_chapter_pages as list_chapter_pages_inner, match_local_manga, scan_bookshelf,
-        scan_comic_chapters,
+        find_first_image_page, list_chapter_pages as list_chapter_pages_inner,
+        manga_directory_fingerprint, scan_comic_chapters,
     },
     config::AppConfig,
     db::CompanionDatabase,
@@ -657,9 +657,8 @@ fn sync_bookshelf_matches_inner(
     let db = CompanionDatabase::open(&database_path)?;
     db.migrate()?;
     let mut comics = db.list_comics()?;
-    let local_library = scan_bookshelf(&bookshelf_root)?;
     let manga_cache = read_manga_cache_records(manga_con_database_path, cover_cache_dir)?;
-    let mut matched_directories = HashSet::new();
+    let mut scanned_count = 0;
     let mut matched_count = 0;
     let mut missing_count = 0;
 
@@ -667,21 +666,45 @@ fn sync_bookshelf_matches_inner(
         if let Some(cache) = manga_cache.get(&comic.source_uri) {
             comic.cover_path = cache.cover_path.clone();
             comic.has_update = cache.has_update;
-        } else {
+        } else if comic.cover_path.as_ref().is_some_and(|path| {
+            path.components()
+                .any(|component| component.as_os_str() == ".mangacon-companion")
+        }) {
             comic.cover_path = None;
+            comic.has_update = false;
+        } else {
             comic.has_update = false;
         }
 
-        if let Some(local) = match_local_manga(comic.title(), &local_library) {
-            let chapters = scan_comic_chapters(&comic.id, &local.directory)?;
-            comic.local_path = Some(local.directory.clone());
-            comic.chapter_count = chapters.len();
-            comic.image_count = chapters.iter().map(|chapter| chapter.page_count).sum();
-            comic.latest_chapter_title = latest_chapter_title(&chapters);
+        if let Some(local_directory) = resolve_incremental_local_directory(comic, &bookshelf_root) {
+            scanned_count += 1;
+            let fingerprint = manga_directory_fingerprint(&local_directory)?;
+            let previous_fingerprint = db.local_fingerprint_for_comic(&comic.id)?;
+            let same_directory = comic
+                .local_path
+                .as_ref()
+                .is_some_and(|path| same_path(path, &local_directory));
+            let can_reuse_index = same_directory
+                && previous_fingerprint.as_deref() == Some(fingerprint.as_str())
+                && comic.scan_status == domain::ScanStatus::Matched
+                && comic.chapter_count > 0;
+
+            if !can_reuse_index {
+                let chapters = scan_comic_chapters(&comic.id, &local_directory)?;
+                comic.chapter_count = chapters.len();
+                comic.image_count = chapters.iter().map(|chapter| chapter.page_count).sum();
+                comic.latest_chapter_title = latest_chapter_title(&chapters);
+                db.replace_chapters_for_comic(&comic.id, &chapters)?;
+            }
+
+            comic.local_path = Some(local_directory.clone());
+            if comic.cover_path.is_none() {
+                comic.cover_path = find_first_image_page(&local_directory)?;
+            }
             comic.scan_status = domain::ScanStatus::Matched;
-            matched_directories.insert(local.directory);
             matched_count += 1;
-            db.replace_chapters_for_comic(&comic.id, &chapters)?;
+            db.upsert_comic(comic)?;
+            db.update_local_fingerprint_for_comic(&comic.id, Some(&fingerprint))?;
         } else {
             comic.local_path = None;
             comic.chapter_count = 0;
@@ -690,23 +713,47 @@ fn sync_bookshelf_matches_inner(
             comic.scan_status = domain::ScanStatus::Missing;
             missing_count += 1;
             db.replace_chapters_for_comic(&comic.id, &[])?;
+            db.upsert_comic(comic)?;
+            db.update_local_fingerprint_for_comic(&comic.id, None)?;
         }
-
-        db.upsert_comic(comic)?;
     }
 
     let favorites = db.list_comics()?;
     Ok(SyncBookshelfMatchesResult {
         imported: comics.len(),
-        scanned: local_library.len(),
+        scanned: scanned_count,
         matched: matched_count,
         missing: missing_count,
-        orphaned: local_library
-            .iter()
-            .filter(|manga| !matched_directories.contains(&manga.directory))
-            .count(),
+        orphaned: 0,
         favorites,
     })
+}
+
+fn resolve_incremental_local_directory(comic: &Comic, bookshelf_root: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = &comic.local_path {
+        candidates.push(path.clone());
+    }
+    for title in [&comic.location, &comic.name] {
+        if !title.trim().is_empty() {
+            candidates.push(bookshelf_root.join(title));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    candidates.into_iter().find(|candidate| {
+        let key = candidate.to_string_lossy().to_string();
+        seen.insert(key) && candidate.is_dir()
+    })
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
 }
 
 fn latest_chapter_title(chapters: &[Chapter]) -> Option<String> {
@@ -1170,6 +1217,131 @@ mod tests {
     }
 
     #[test]
+    fn bookshelf_sync_uses_local_first_page_when_mangacon_cover_is_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("state.sqlite");
+        let bookshelf_root = temp.path().join("bookshelf");
+        let chapter = bookshelf_root.join("Local Cover").join("chapter-01");
+        fs::create_dir_all(&chapter).expect("chapter dir");
+        fs::write(chapter.join("002.jpg"), b"image").expect("late page");
+        fs::write(chapter.join("001.png"), b"image").expect("first page");
+
+        let mangacon_db_path = temp.path().join("MangaCon.dat");
+        let connection = rusqlite::Connection::open(&mangacon_db_path).expect("mangacon db");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE mc3_badges(category INTEGER NOT NULL, id INTEGER NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(category, id)) WITHOUT ROWID;
+                CREATE TABLE mc3_mangas(uri TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT, groups TEXT, location TEXT NOT NULL, status INTEGER, order_tick INTEGER NOT NULL DEFAULT 0, update_tick INTEGER NOT NULL DEFAULT 0);
+                "#,
+            )
+            .expect("mangacon schema");
+        connection
+            .execute(
+                "INSERT INTO mc3_mangas(rowid, uri, name, domain, location, status, order_tick, update_tick) VALUES (31, 'cp:local-cover', 'Local Cover', NULL, 'Local Cover', 2, 1, 1)",
+                [],
+            )
+            .expect("mangacon manga");
+        drop(connection);
+
+        let mut db = CompanionDatabase::open(&db_path).expect("db open");
+        db.migrate().expect("migrate");
+        let mut comic = domain::Comic::from_mangacon_favorite(
+            "Local Cover",
+            "Local Cover",
+            "cp:local-cover",
+            None,
+            Vec::new(),
+        );
+        comic.scan_status = domain::ScanStatus::Imported;
+        db.upsert_comics(&[comic]).expect("seed imported favorite");
+        drop(db);
+
+        let summary = sync_bookshelf_matches_inner(
+            bookshelf_root.display().to_string(),
+            db_path.display().to_string(),
+            mangacon_db_path.display().to_string(),
+        )
+        .expect("sync bookshelf");
+
+        let synced = summary
+            .favorites
+            .iter()
+            .find(|comic| comic.source_uri == "cp:local-cover")
+            .expect("synced comic");
+        let cover_path = synced.cover_path.as_ref().expect("local cover path");
+        assert!(cover_path.ends_with("001.png"));
+    }
+
+    #[test]
+    fn bookshelf_sync_reuses_cached_chapter_index_when_local_fingerprint_is_unchanged() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("state.sqlite");
+        let bookshelf_root = temp.path().join("bookshelf");
+        let comic_dir = bookshelf_root.join("Stable Index");
+        let chapter = comic_dir.join("chapter-01");
+        fs::create_dir_all(&chapter).expect("chapter dir");
+        fs::write(chapter.join("001.jpg"), b"image").expect("page");
+
+        let mangacon_db_path = temp.path().join("MangaCon.dat");
+        let connection = rusqlite::Connection::open(&mangacon_db_path).expect("mangacon db");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE mc3_badges(category INTEGER NOT NULL, id INTEGER NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(category, id)) WITHOUT ROWID;
+                CREATE TABLE mc3_mangas(uri TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT, groups TEXT, location TEXT NOT NULL, status INTEGER, order_tick INTEGER NOT NULL DEFAULT 0, update_tick INTEGER NOT NULL DEFAULT 0);
+                "#,
+            )
+            .expect("mangacon schema");
+        connection
+            .execute(
+                "INSERT INTO mc3_mangas(rowid, uri, name, domain, location, status, order_tick, update_tick) VALUES (31, 'cp:stable', 'Stable Index', NULL, 'Stable Index', 2, 1, 1)",
+                [],
+            )
+            .expect("mangacon manga");
+        drop(connection);
+
+        let db = CompanionDatabase::open(&db_path).expect("db open");
+        db.migrate().expect("migrate");
+        let mut comic = domain::Comic::from_mangacon_favorite(
+            "Stable Index",
+            "Stable Index",
+            "cp:stable",
+            None,
+            Vec::new(),
+        );
+        comic.local_path = Some(comic_dir.clone());
+        comic.chapter_count = 9;
+        comic.image_count = 99;
+        comic.latest_chapter_title = Some("Cached chapter".to_string());
+        comic.scan_status = domain::ScanStatus::Matched;
+        db.upsert_comic(&comic).expect("seed comic");
+        let fingerprint = manga_directory_fingerprint(&comic_dir).expect("fingerprint");
+        db.update_local_fingerprint_for_comic("cp:stable", Some(&fingerprint))
+            .expect("seed fingerprint");
+        drop(db);
+
+        let summary = sync_bookshelf_matches_inner(
+            bookshelf_root.display().to_string(),
+            db_path.display().to_string(),
+            mangacon_db_path.display().to_string(),
+        )
+        .expect("sync bookshelf");
+
+        let synced = summary
+            .favorites
+            .iter()
+            .find(|comic| comic.source_uri == "cp:stable")
+            .expect("synced comic");
+        assert_eq!(synced.chapter_count, 9);
+        assert_eq!(synced.image_count, 99);
+        assert_eq!(
+            synced.latest_chapter_title.as_deref(),
+            Some("Cached chapter")
+        );
+    }
+
+    #[test]
     fn favorite_update_recovery_restart_limit_is_safe_and_bounded() {
         assert_eq!(favorite_update_recovery_restart_limit(None), 2);
         assert_eq!(favorite_update_recovery_restart_limit(Some(0)), 0);
@@ -1372,7 +1544,7 @@ mod tests {
         assert_eq!(summary.imported, 2);
         assert_eq!(summary.matched, 1);
         assert_eq!(summary.missing, 1);
-        assert_eq!(summary.orphaned, 1);
+        assert_eq!(summary.orphaned, 0);
         let synced = summary
             .favorites
             .iter()

@@ -333,6 +333,42 @@ h2 {
   color: #1f5f99;
 }
 
+.panel-title-row .compact-action {
+  margin-left: auto;
+}
+
+.task-status-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.task-status-item {
+  min-width: 0;
+  border: 1px solid #e0e6ef;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #f8fafc;
+}
+
+.task-status-item span,
+.task-status-item strong {
+  display: block;
+}
+
+.task-status-item span {
+  color: #647084;
+  font-size: 12px;
+}
+
+.task-status-item strong {
+  margin-top: 4px;
+  color: #172033;
+  font-size: 20px;
+  line-height: 1;
+}
+
 .status-list {
   display: grid;
   gap: 12px;

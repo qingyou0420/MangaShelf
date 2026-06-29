@@ -45,6 +45,7 @@ impl CompanionDatabase {
                 chapter_count INTEGER NOT NULL DEFAULT 0,
                 image_count INTEGER NOT NULL DEFAULT 0,
                 latest_chapter_title TEXT,
+                local_fingerprint TEXT,
                 read_progress_page INTEGER NOT NULL DEFAULT 0,
                 scan_status TEXT NOT NULL DEFAULT 'pending',
                 has_update INTEGER NOT NULL DEFAULT 0,
@@ -83,6 +84,7 @@ impl CompanionDatabase {
         )?;
         self.ensure_comics_column("cover_path", "TEXT")?;
         self.ensure_comics_column("latest_chapter_title", "TEXT")?;
+        self.ensure_comics_column("local_fingerprint", "TEXT")?;
         self.ensure_comics_column("has_update", "INTEGER NOT NULL DEFAULT 0")?;
         Ok(())
     }
@@ -320,6 +322,28 @@ impl CompanionDatabase {
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    pub fn local_fingerprint_for_comic(&self, comic_id: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT local_fingerprint FROM comics WHERE id = ?1",
+                params![comic_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn update_local_fingerprint_for_comic(
+        &self,
+        comic_id: &str,
+        fingerprint: Option<&str>,
+    ) -> Result<()> {
+        self.connection.execute(
+            "UPDATE comics SET local_fingerprint = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+            params![fingerprint, comic_id],
+        )?;
+        Ok(())
     }
 
     fn tags_for_comic(&self, comic_id: &str) -> rusqlite::Result<Vec<String>> {

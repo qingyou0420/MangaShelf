@@ -244,6 +244,8 @@ export interface MangaConTaskStatus {
   failedTasks: number;
   finishedTasks: number;
   totalErrors: number;
+  continueLastSessionTasks?: boolean | null;
+  continueLastSessionTasksValue?: string | null;
 }
 
 export interface RequeuedMangaConRepairTask {

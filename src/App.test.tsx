@@ -132,6 +132,8 @@ describe("App", () => {
       failedTasks: 0,
       finishedTasks: 0,
       totalErrors: 0,
+      continueLastSessionTasks: null,
+      continueLastSessionTasksValue: null,
     });
     loadImportedComicsMock.mockResolvedValue([]);
     repairMangaConFailedTasksMock.mockResolvedValue({
@@ -377,6 +379,32 @@ describe("App", () => {
     expect(
       screen.getAllByText("已唤醒漫画控继续 500 个未完成下载任务").length,
     ).toBeGreaterThan(0);
+  });
+
+  it("刷新任务状态会读取漫画控数据库并更新仪表盘", async () => {
+    const user = userEvent.setup();
+    getMangaConTaskStatusMock.mockResolvedValue({
+      totalTasks: 20,
+      activeTasks: 7,
+      failedTasks: 2,
+      finishedTasks: 11,
+      totalErrors: 5,
+      continueLastSessionTasks: true,
+      continueLastSessionTasksValue: "1",
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "刷新任务状态" }));
+
+    await waitFor(() => {
+      expect(getMangaConTaskStatusMock).toHaveBeenCalledWith({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+      });
+    });
+    expect(screen.getByText("未完成")).toBeInTheDocument();
+    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
+    expect(screen.getByText("启用")).toBeInTheDocument();
   });
 
   it("从仪表盘手动修复失败图片会重新加入漫画控修复队列", async () => {

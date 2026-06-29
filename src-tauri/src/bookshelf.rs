@@ -4,6 +4,7 @@ use std::{
     cmp::Ordering,
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub fn scan_bookshelf(root: impl AsRef<Path>) -> Result<Vec<LocalManga>> {
@@ -116,6 +117,30 @@ pub fn list_chapter_pages(chapter_dir: impl AsRef<Path>) -> Result<Vec<String>> 
         .collect())
 }
 
+pub fn find_first_image_page(path: impl AsRef<Path>) -> Result<Option<PathBuf>> {
+    let path = path.as_ref();
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let mut pages = Vec::new();
+    collect_image_pages(path, &mut pages)?;
+    pages.sort_by(|a, b| compare_page_paths(a.as_path(), b.as_path()));
+    Ok(pages.into_iter().next())
+}
+
+pub fn manga_directory_fingerprint(path: impl AsRef<Path>) -> Result<String> {
+    let root = path.as_ref();
+    if !root.exists() {
+        return Ok(String::new());
+    }
+
+    let mut entries = Vec::new();
+    collect_fingerprint_entries(root, root, &mut entries)?;
+    entries.sort();
+    Ok(entries.join("\n"))
+}
+
 fn collect_image_pages(path: &Path, pages: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(path)? {
         let child = entry?.path();
@@ -127,6 +152,34 @@ fn collect_image_pages(path: &Path, pages: &mut Vec<PathBuf>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn collect_fingerprint_entries(root: &Path, path: &Path, entries: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(path)? {
+        let child = entry?.path();
+        if child.is_dir() {
+            collect_fingerprint_entries(root, &child, entries)?;
+        } else if child.is_file() && is_image_file(&child) {
+            let metadata = fs::metadata(&child)?;
+            let relative = child.strip_prefix(root).unwrap_or(child.as_path());
+            entries.push(format!(
+                "{}|{}|{}",
+                relative.to_string_lossy().replace('\\', "/"),
+                metadata.len(),
+                modified_tick(&metadata)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn modified_tick(metadata: &fs::Metadata) -> u128 {
+    metadata
+        .modified()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn compare_page_paths(a: &Path, b: &Path) -> Ordering {
@@ -384,5 +437,37 @@ mod tests {
         assert!(pages[1].ends_with("2.png"));
         assert!(pages[2].ends_with("10.png"));
         assert!(pages[3].ends_with("11.webp"));
+    }
+
+    #[test]
+    fn finds_first_image_page_for_local_cover_fallback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let chapter = temp.path().join("chapter-01");
+        fs::create_dir_all(&chapter).expect("chapter dir");
+        fs::write(chapter.join("010.jpg"), b"image").expect("late page");
+        fs::write(chapter.join("001.png"), b"image").expect("first page");
+
+        let cover = find_first_image_page(temp.path())
+            .expect("find cover")
+            .expect("cover page");
+
+        assert_eq!(
+            cover.file_name().and_then(|name| name.to_str()),
+            Some("001.png")
+        );
+    }
+
+    #[test]
+    fn manga_directory_fingerprint_changes_when_chapter_contents_change() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let chapter = temp.path().join("chapter-01");
+        fs::create_dir_all(&chapter).expect("chapter dir");
+        fs::write(chapter.join("001.jpg"), b"image").expect("first page");
+
+        let before = manga_directory_fingerprint(temp.path()).expect("initial fingerprint");
+        fs::write(chapter.join("002.jpg"), b"image").expect("second page");
+        let after = manga_directory_fingerprint(temp.path()).expect("changed fingerprint");
+
+        assert_ne!(before, after);
     }
 }
