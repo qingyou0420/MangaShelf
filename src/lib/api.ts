@@ -17,6 +17,7 @@ import type {
   OpenFavoritesResult,
   QueueMangaConUpdatesResult,
   RepairMangaConFailedTasksResult,
+  ResumeMangaConUnfinishedTasksResult,
   RecoveringFavoriteUpdateResult,
   SyncBookshelfMatchesResult,
   TriggerDetailDownloadBatchResult,
@@ -87,6 +88,11 @@ export interface RepairMangaConFailedTasksOptions {
   mangaConDatabasePath: string;
   executablePath: string;
   maxTasks?: number;
+}
+
+export interface ResumeMangaConUnfinishedTasksOptions {
+  mangaConDatabasePath: string;
+  executablePath: string;
 }
 
 export interface TriggerDetailUpdateBatchOptions {
@@ -271,6 +277,18 @@ export function repairMangaConFailedTasks(
       mangaConDatabasePath: options.mangaConDatabasePath,
       executablePath: options.executablePath,
       maxTasks: options.maxTasks,
+    },
+  );
+}
+
+export function resumeMangaConUnfinishedTasks(
+  options: ResumeMangaConUnfinishedTasksOptions,
+): Promise<ResumeMangaConUnfinishedTasksResult> {
+  return invoke<ResumeMangaConUnfinishedTasksResult>(
+    "resume_mangacon_unfinished_tasks",
+    {
+      mangaConDatabasePath: options.mangaConDatabasePath,
+      executablePath: options.executablePath,
     },
   );
 }

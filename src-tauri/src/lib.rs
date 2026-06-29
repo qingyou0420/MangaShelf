@@ -23,9 +23,11 @@ use crate::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
         confirm::ContinueDownloadConfirmResult,
         database::{
-            queue_updates_including_local_gaps, read_manga_cache_records, read_task_status,
-            requeue_failed_tasks_for_repair, MangaConTaskStatus, QueueMangaConUpdatesResult,
-            QueuedMangaConTask, RepairMangaConFailedTasksResult, RequeuedMangaConRepairTask,
+            prepare_unfinished_tasks_for_resume, queue_updates_including_local_gaps,
+            read_manga_cache_records, read_task_status, requeue_failed_tasks_for_repair,
+            MangaConTaskStatus, QueueMangaConUpdatesResult, QueuedMangaConTask,
+            RepairMangaConFailedTasksResult, RequeuedMangaConRepairTask,
+            ResumeMangaConUnfinishedTasksResult,
         },
         navigation::{
             favorite_update_all_limit, open_favorites_from_home as open_mangacon_favorites_inner,
@@ -263,6 +265,17 @@ pub struct RepairMangaConFailedTasksCommandResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResumeMangaConUnfinishedTasksCommandResult {
+    pub backup_path: String,
+    pub total_unfinished: usize,
+    pub resume_configured: bool,
+    pub launched: bool,
+    pub launch_pid: Option<u32>,
+    pub confirm: ContinueDownloadConfirmResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EnsureMangaConRunningResult {
     pub launched: bool,
     pub launch_pid: Option<u32>,
@@ -377,7 +390,11 @@ fn repair_mangacon_failed_tasks(
         .map_err(|err| err.to_string())?;
     let (launched, launch_pid, confirm) = if repair.requeued > 0 {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        (true, Some(launch.pid), database_auto_resume_confirm_result())
+        (
+            true,
+            Some(launch.pid),
+            database_auto_resume_confirm_result(),
+        )
     } else {
         (
             false,
@@ -404,6 +421,47 @@ fn repair_mangacon_failed_tasks(
         launch_pid,
         confirm,
         tasks,
+    })
+}
+
+#[tauri::command]
+fn resume_mangacon_unfinished_tasks(
+    manga_con_database_path: String,
+    executable_path: String,
+) -> Result<ResumeMangaConUnfinishedTasksCommandResult, String> {
+    let resume = prepare_unfinished_tasks_for_resume(manga_con_database_path)
+        .map_err(|err| err.to_string())?;
+    let (launched, launch_pid, confirm) = if resume.resume_configured {
+        let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
+        (
+            true,
+            Some(launch.pid),
+            database_auto_resume_confirm_result(),
+        )
+    } else {
+        (
+            false,
+            None,
+            ContinueDownloadConfirmResult {
+                found: false,
+                clicked: false,
+                dialog_title: None,
+            },
+        )
+    };
+
+    let ResumeMangaConUnfinishedTasksResult {
+        backup_path,
+        total_unfinished,
+        resume_configured,
+    } = resume;
+    Ok(ResumeMangaConUnfinishedTasksCommandResult {
+        backup_path,
+        total_unfinished,
+        resume_configured,
+        launched,
+        launch_pid,
+        confirm,
     })
 }
 
@@ -491,10 +549,15 @@ fn queue_mangacon_updates(
         max_updates,
     )
     .map_err(|err| err.to_string())?;
-    let should_refresh_mangacon = queue.queued > 0 || queue.cleared_update_markers > 0;
+    let should_refresh_mangacon =
+        queue.queued > 0 || queue.skipped_existing > 0 || queue.cleared_update_markers > 0;
     let (launched, launch_pid, confirm) = if should_refresh_mangacon {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        (true, Some(launch.pid), database_auto_resume_confirm_result())
+        (
+            true,
+            Some(launch.pid),
+            database_auto_resume_confirm_result(),
+        )
     } else {
         (
             false,
@@ -935,6 +998,7 @@ pub fn run() {
             scan_mangacon_badges,
             get_mangacon_task_status,
             repair_mangacon_failed_tasks,
+            resume_mangacon_unfinished_tasks,
             open_mangacon_favorites,
             open_first_updated_comic,
             scan_favorites_updates,

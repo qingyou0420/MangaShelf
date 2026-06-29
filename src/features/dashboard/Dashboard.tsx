@@ -19,10 +19,12 @@ interface DashboardProps {
   isScanning?: boolean;
   isUpdating?: boolean;
   isRepairing?: boolean;
+  isResuming?: boolean;
   onImportFavorites?: () => void;
   onScanBookshelf?: () => void;
   onUpdateFavorites?: () => void;
   onRepairFailedTasks?: () => void;
+  onResumeUnfinishedTasks?: () => void;
 }
 
 export function Dashboard({
@@ -34,10 +36,12 @@ export function Dashboard({
   isScanning = false,
   isUpdating = false,
   isRepairing = false,
+  isResuming = false,
   onImportFavorites,
   onScanBookshelf,
   onUpdateFavorites,
   onRepairFailedTasks,
+  onResumeUnfinishedTasks,
 }: DashboardProps) {
   const localCount = favorites.filter((item) => item.localPath).length;
   const pendingUpdates = favorites.filter((item) => item.hasUpdate).length;
@@ -62,6 +66,15 @@ export function Dashboard({
           >
             <RefreshCw size={18} aria-hidden="true" />
             一键更新收藏
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={onResumeUnfinishedTasks}
+            disabled={isResuming}
+          >
+            <DownloadCloud size={18} aria-hidden="true" />
+            继续未完成下载
           </button>
           <button
             className="secondary-action"

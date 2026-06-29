@@ -20,6 +20,7 @@ import {
   loadImportedComics,
   queueMangaConUpdates,
   repairMangaConFailedTasks,
+  resumeMangaConUnfinishedTasks,
   syncBookshelfMatches,
 } from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
@@ -58,6 +59,7 @@ function App() {
   const [isScanningBookshelf, setIsScanningBookshelf] = useState(false);
   const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
   const [isRepairingFailedTasks, setIsRepairingFailedTasks] = useState(false);
+  const [isResumingUnfinishedTasks, setIsResumingUnfinishedTasks] = useState(false);
   const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
   const mangaConReadyAtRef = useRef(0);
   const ensureMangaConPromiseRef =
@@ -265,6 +267,30 @@ function App() {
     await repairFailedTasks("manual");
   }
 
+  async function handleResumeUnfinishedTasks() {
+    setIsResumingUnfinishedTasks(true);
+    setImportMessage("正在唤醒漫画控已有未完成下载任务...");
+    try {
+      const result = await resumeMangaConUnfinishedTasks({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+      });
+      setQueuedUpdateCount(result.totalUnfinished);
+      if (result.resumeConfigured) {
+        setImportMessage(
+          `已唤醒漫画控继续 ${result.totalUnfinished} 个未完成下载任务`,
+        );
+        startRepairMonitor();
+      } else {
+        setImportMessage("漫画控当前没有未完成下载任务");
+      }
+    } catch (cause) {
+      setImportMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsResumingUnfinishedTasks(false);
+    }
+  }
+
   async function repairFailedTasks(mode: "manual" | "auto") {
     setIsRepairingFailedTasks(true);
     setImportMessage(
@@ -340,10 +366,12 @@ function App() {
             isScanning={isScanningBookshelf}
             isUpdating={isUpdatingFavorites}
             isRepairing={isRepairingFailedTasks}
+            isResuming={isResumingUnfinishedTasks}
             onImportFavorites={handleImportFavorites}
             onScanBookshelf={syncBookshelfLibrary}
             onUpdateFavorites={handleUpdateFavorites}
             onRepairFailedTasks={handleRepairFailedTasks}
+            onResumeUnfinishedTasks={handleResumeUnfinishedTasks}
           />
         )}
         {activeSection === "library" && (

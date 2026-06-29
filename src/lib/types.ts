@@ -265,6 +265,15 @@ export interface RepairMangaConFailedTasksResult {
   tasks: RequeuedMangaConRepairTask[];
 }
 
+export interface ResumeMangaConUnfinishedTasksResult {
+  backupPath: string;
+  totalUnfinished: number;
+  resumeConfigured: boolean;
+  launched: boolean;
+  launchPid?: number | null;
+  confirm: ContinueDownloadConfirmResult;
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }

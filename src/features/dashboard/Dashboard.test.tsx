@@ -20,6 +20,7 @@ describe("Dashboard", () => {
 
     expect(screen.getByText("漫画控伴侣")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "一键更新收藏" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续未完成下载" })).toBeInTheDocument();
     expect(screen.getByText("数据库队列")).toBeInTheDocument();
     expect(screen.getByText("漫画控状态")).toBeInTheDocument();
     expect(screen.getByText("E:\\漫画控\\MangaCon.exe")).toBeInTheDocument();
@@ -46,5 +47,23 @@ describe("Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "一键更新收藏" }));
 
     expect(onUpdateFavorites).toHaveBeenCalledTimes(1);
+  });
+
+  it("点击继续未完成下载时触发继续任务回调", async () => {
+    const user = userEvent.setup();
+    const onResumeUnfinishedTasks = vi.fn();
+
+    render(
+      <Dashboard
+        paths={approvedDefaultPaths}
+        favorites={[sampleFavorite]}
+        pendingTasks={3}
+        onResumeUnfinishedTasks={onResumeUnfinishedTasks}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "继续未完成下载" }));
+
+    expect(onResumeUnfinishedTasks).toHaveBeenCalledTimes(1);
   });
 });

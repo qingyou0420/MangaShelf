@@ -65,6 +65,14 @@ pub struct RepairMangaConFailedTasksResult {
     pub tasks: Vec<RequeuedMangaConRepairTask>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeMangaConUnfinishedTasksResult {
+    pub backup_path: String,
+    pub total_unfinished: usize,
+    pub resume_configured: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MangaConMangaCacheRecord {
     pub rowid: i64,
@@ -252,6 +260,25 @@ pub fn requeue_failed_tasks_for_repair(
         total_failed: failed_tasks.len(),
         requeued: tasks.len(),
         tasks,
+    })
+}
+
+pub fn prepare_unfinished_tasks_for_resume(
+    database_path: impl AsRef<Path>,
+) -> Result<ResumeMangaConUnfinishedTasksResult> {
+    let backup_path = backup_database(database_path.as_ref())?;
+    let mut connection = Connection::open(database_path)?;
+    let transaction = connection.transaction()?;
+    let total_unfinished = count_unfinished_tasks(&transaction)?;
+    if total_unfinished > 0 {
+        enable_continue_last_session_tasks(&transaction)?;
+    }
+    transaction.commit()?;
+
+    Ok(ResumeMangaConUnfinishedTasksResult {
+        backup_path: backup_path.to_string_lossy().into_owned(),
+        total_unfinished,
+        resume_configured: total_unfinished > 0,
     })
 }
 
@@ -694,6 +721,15 @@ fn clear_volume_update_marker(connection: &Connection, volume_id: i64) -> Result
             params![volume_id],
         )
         .map_err(Into::into)
+}
+
+fn count_unfinished_tasks(connection: &Connection) -> Result<usize> {
+    let total: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM mc3_tasks WHERE finished_tick IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(total as usize)
 }
 
 fn list_failed_task_candidates(
@@ -1241,6 +1277,36 @@ mod tests {
         assert_eq!(row.0, None);
         assert_eq!(row.1, Some(10));
         assert_eq!(row.2, None);
+        assert_eq!(
+            read_config_value(&connection, "continue_last_session_tasks").as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn prepares_existing_unfinished_tasks_for_database_resume() {
+        let (_temp, path) = create_fixture_db();
+        let connection = Connection::open(&path).expect("open");
+        connection
+            .execute(
+                "INSERT INTO mc3_tasks(mu, domain, vk, location, extra, errors, order_index, finished_tick) VALUES (?1, NULL, ?2, ?3, ?4, NULL, 12, NULL)",
+                params![
+                    "cp:unfinished",
+                    "unfinished-volume",
+                    "Unfinished\\Chapter 1",
+                    r#"{"mid":1,"vid":2}"#,
+                ],
+            )
+            .expect("unfinished task");
+        drop(connection);
+
+        let result = prepare_unfinished_tasks_for_resume(&path).expect("prepare unfinished tasks");
+
+        assert_eq!(result.total_unfinished, 1);
+        assert!(result.resume_configured);
+        assert!(std::path::Path::new(&result.backup_path).exists());
+
+        let connection = Connection::open(path).expect("reopen");
         assert_eq!(
             read_config_value(&connection, "continue_last_session_tasks").as_deref(),
             Some("1")

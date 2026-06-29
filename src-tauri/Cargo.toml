@@ -1,6 +1,6 @@
 [package]
 name = "mangacon-companion"
-version = "1.0.13"
+version = "1.0.14"
 description = "Windows companion for MangaCon automation, local bookshelf management, and reading"
 authors = ["Shuangyue"]
 edition = "2021"

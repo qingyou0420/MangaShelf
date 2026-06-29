@@ -14,6 +14,7 @@ import {
   openMangaConFavorites,
   queueMangaConUpdates,
   repairMangaConFailedTasks,
+  resumeMangaConUnfinishedTasks,
   restartMangaCon,
   scanDetailUpdates,
   scanFavoritesUpdates,
@@ -769,6 +770,39 @@ describe("importFavorites", () => {
     expect(result).toMatchObject({
       totalFailed: 2,
       requeued: 2,
+      launched: true,
+    });
+  });
+
+  it("封装漫画控未完成任务继续下载 command", async () => {
+    invokeMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-3",
+      totalUnfinished: 500,
+      resumeConfigured: true,
+      launched: true,
+      launchPid: 987,
+      confirm: {
+        found: false,
+        clicked: false,
+        dialogTitle: "continue_last_session_tasks",
+      },
+    });
+
+    const result = await resumeMangaConUnfinishedTasks({
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("resume_mangacon_unfinished_tasks", {
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+    expect(result).toMatchObject({
+      totalUnfinished: 500,
+      resumeConfigured: true,
       launched: true,
     });
   });

@@ -11,6 +11,7 @@ import {
   listenFavoriteUpdateRecoveryEvents,
   queueMangaConUpdates,
   repairMangaConFailedTasks,
+  resumeMangaConUnfinishedTasks,
   scanLocalChapters,
   syncBookshelfMatches,
   triggerAllFavoriteUpdatesWithRecovery,
@@ -33,6 +34,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
   listenFavoriteUpdateRecoveryEvents: vi.fn(),
   queueMangaConUpdates: vi.fn(),
   repairMangaConFailedTasks: vi.fn(),
+  resumeMangaConUnfinishedTasks: vi.fn(),
   scanLocalChapters: vi.fn(),
   syncBookshelfMatches: vi.fn(),
   triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
@@ -48,6 +50,9 @@ const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
 );
 const queueMangaConUpdatesMock = vi.mocked(queueMangaConUpdates);
 const repairMangaConFailedTasksMock = vi.mocked(repairMangaConFailedTasks);
+const resumeMangaConUnfinishedTasksMock = vi.mocked(
+  resumeMangaConUnfinishedTasks,
+);
 const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
 const syncBookshelfMatchesMock = vi.mocked(syncBookshelfMatches);
 const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
@@ -111,6 +116,7 @@ describe("App", () => {
     listenFavoriteUpdateRecoveryEventsMock.mockReset();
     queueMangaConUpdatesMock.mockReset();
     repairMangaConFailedTasksMock.mockReset();
+    resumeMangaConUnfinishedTasksMock.mockReset();
     scanLocalChaptersMock.mockReset();
     syncBookshelfMatchesMock.mockReset();
     triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
@@ -137,6 +143,15 @@ describe("App", () => {
       launchPid: null,
       confirm: { found: false, clicked: false, dialogTitle: null },
       tasks: [],
+    });
+    resumeMangaConUnfinishedTasksMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-3",
+      totalUnfinished: 0,
+      resumeConfigured: false,
+      launched: false,
+      launchPid: null,
+      confirm: { found: false, clicked: false, dialogTitle: null },
     });
     syncBookshelfMatchesMock.mockResolvedValue({
       imported: 0,
@@ -328,6 +343,39 @@ describe("App", () => {
       screen.getAllByText(
         "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",
       ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("继续未完成下载只唤醒漫画控已有任务而不扫描书架", async () => {
+    const user = userEvent.setup();
+    resumeMangaConUnfinishedTasksMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-3",
+      totalUnfinished: 500,
+      resumeConfigured: true,
+      launched: true,
+      launchPid: 987,
+      confirm: {
+        found: false,
+        clicked: false,
+        dialogTitle: "continue_last_session_tasks",
+      },
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "继续未完成下载" }));
+
+    await waitFor(() => {
+      expect(resumeMangaConUnfinishedTasksMock).toHaveBeenCalledWith({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+      });
+    });
+    expect(queueMangaConUpdatesMock).not.toHaveBeenCalled();
+    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByText("已唤醒漫画控继续 500 个未完成下载任务").length,
     ).toBeGreaterThan(0);
   });
 
