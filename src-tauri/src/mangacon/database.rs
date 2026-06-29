@@ -2,8 +2,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -237,8 +236,10 @@ pub fn requeue_failed_tasks_for_repair(
 
 pub fn read_manga_cache_records(
     database_path: impl AsRef<Path>,
+    cover_cache_dir: impl AsRef<Path>,
 ) -> Result<HashMap<String, MangaConMangaCacheRecord>> {
     let database_path = database_path.as_ref();
+    let cover_cache_dir = cover_cache_dir.as_ref();
     let covers_dir = database_path
         .parent()
         .map(|parent| parent.join("Covers"))
@@ -256,21 +257,65 @@ pub fn read_manga_cache_records(
         "#,
     )?;
     let rows = statement.query_map([], |row| {
-        let rowid: i64 = row.get(0)?;
-        let cover_path = covers_dir.join(rowid.to_string());
-        Ok(MangaConMangaCacheRecord {
-            rowid,
-            uri: row.get(1)?,
-            cover_path: cover_path.exists().then_some(cover_path),
-            has_update: row.get::<_, i64>(2)? != 0,
-        })
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)? != 0,
+        ))
     })?;
 
-    let records = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(records
-        .into_iter()
-        .map(|record| (record.uri.clone(), record))
-        .collect())
+    let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut records = HashMap::new();
+    for (rowid, uri, has_update) in rows {
+        let source_cover_path = covers_dir.join(rowid.to_string());
+        let cover_path = materialize_cover_cache(&source_cover_path, cover_cache_dir, rowid)?;
+        let record = MangaConMangaCacheRecord {
+            rowid,
+            uri: uri.clone(),
+            cover_path,
+            has_update,
+        };
+        records.insert(uri, record);
+    }
+
+    Ok(records)
+}
+
+fn materialize_cover_cache(
+    source_cover_path: &Path,
+    cover_cache_dir: &Path,
+    rowid: i64,
+) -> Result<Option<PathBuf>> {
+    if !source_cover_path.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(source_cover_path)?;
+    let Some(extension) = detect_image_extension(&bytes) else {
+        return Ok(None);
+    };
+    fs::create_dir_all(cover_cache_dir)?;
+    let cached_cover_path = cover_cache_dir.join(format!("{rowid}.{extension}"));
+    fs::write(&cached_cover_path, bytes)?;
+    Ok(Some(cached_cover_path))
+}
+
+fn detect_image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1A\n") {
+        Some("png")
+    } else if bytes.starts_with(b"\xFF\xD8\xFF") {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.starts_with(b"BM") {
+        Some("bmp")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" && &bytes[8..12] == b"avif" {
+        Some("avif")
+    } else {
+        None
+    }
 }
 
 fn backup_database(database_path: &Path) -> Result<PathBuf> {

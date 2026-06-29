@@ -545,11 +545,16 @@ fn sync_bookshelf_matches_inner(
     manga_con_database_path: String,
 ) -> anyhow::Result<SyncBookshelfMatchesResult> {
     let bookshelf_root = PathBuf::from(bookshelf_root);
-    let db = CompanionDatabase::open(database_path)?;
+    let database_path = PathBuf::from(database_path);
+    let cover_cache_dir = database_path
+        .parent()
+        .map(|parent| parent.join(".mangacon-companion").join("covers"))
+        .unwrap_or_else(|| PathBuf::from(".mangacon-companion").join("covers"));
+    let db = CompanionDatabase::open(&database_path)?;
     db.migrate()?;
     let mut comics = db.list_comics()?;
     let local_library = scan_bookshelf(&bookshelf_root)?;
-    let manga_cache = read_manga_cache_records(manga_con_database_path)?;
+    let manga_cache = read_manga_cache_records(manga_con_database_path, cover_cache_dir)?;
     let mut matched_directories = HashSet::new();
     let mut matched_count = 0;
     let mut missing_count = 0;
@@ -1120,7 +1125,7 @@ mod tests {
         let mangacon_db_path = temp.path().join("MangaCon.dat");
         let covers_dir = temp.path().join("Covers");
         fs::create_dir_all(&covers_dir).expect("covers dir");
-        fs::write(covers_dir.join("31"), b"cover").expect("cover file");
+        fs::write(covers_dir.join("31"), b"\x89PNG\r\n\x1A\nfixture").expect("cover file");
         let connection = rusqlite::Connection::open(&mangacon_db_path).expect("mangacon db");
         connection
             .execute_batch(
@@ -1187,10 +1192,9 @@ mod tests {
         assert_eq!(synced.image_count, 2);
         assert_eq!(synced.latest_chapter_title.as_deref(), Some("第02话"));
         assert!(synced.has_update);
-        assert!(synced
-            .cover_path
-            .as_ref()
-            .is_some_and(|path| path.ends_with("31")));
+        let cover_path = synced.cover_path.as_ref().expect("cover path");
+        assert!(cover_path.ends_with(".mangacon-companion/covers/31.png"));
+        assert!(cover_path.exists());
 
         let chapters = CompanionDatabase::open(&db_path)
             .expect("db reopen")

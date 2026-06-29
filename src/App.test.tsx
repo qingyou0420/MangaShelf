@@ -84,7 +84,7 @@ const syncedFavorites: MangaConFavorite[] = [
   {
     ...importedFavorites[0],
     localPath: "E:\\书架\\婚纱之中待到花火散去",
-    coverPath: "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\Covers\\31",
+    coverPath: "E:\\书架\\.mangacon-companion\\covers\\31.png",
     chapterCount: 1,
     imageCount: 2,
     latestChapterTitle: "第01话",
@@ -166,7 +166,7 @@ describe("App", () => {
     );
   });
 
-  it("导入漫画控收藏后同步书架和封面", async () => {
+  it("导入收藏不自动扫描书架，手动扫描后才同步本地索引和封面", async () => {
     const user = userEvent.setup();
     importFavoritesMock.mockResolvedValue({
       imported: 2,
@@ -191,6 +191,15 @@ describe("App", () => {
         favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
         databasePath: approvedDefaultPaths.databasePath,
       });
+    });
+    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
+
+    const favoritesMetric = screen.getByLabelText("收藏统计");
+    expect(within(favoritesMetric).getByText("2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "扫描本地书架" }));
+
+    await waitFor(() => {
       expect(syncBookshelfMatchesMock).toHaveBeenCalledWith({
         bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
         databasePath: approvedDefaultPaths.databasePath,
@@ -203,16 +212,13 @@ describe("App", () => {
       ).length,
     ).toBeGreaterThan(0);
 
-    const favoritesMetric = screen.getByLabelText("收藏统计");
-    expect(within(favoritesMetric).getByText("2")).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "书库" }));
 
     expect(screen.getAllByText("婚纱之中待到花火散去").length).toBeGreaterThan(0);
     expect(screen.getAllByText("已匹配本地").length).toBeGreaterThan(0);
     expect(screen.getByAltText("婚纱之中待到花火散去 封面")).toHaveAttribute(
       "src",
-      expect.stringContaining("Covers"),
+      expect.stringContaining("31.png"),
     );
   });
 
@@ -220,8 +226,8 @@ describe("App", () => {
     const user = userEvent.setup();
     importFavoritesMock.mockResolvedValue({
       imported: 1,
-      matched: 1,
-      favorites: [syncedFavorites[0]],
+      matched: 0,
+      favorites: [importedFavorites[0]],
     });
     syncBookshelfMatchesMock.mockResolvedValue({
       imported: 1,
@@ -251,6 +257,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "导入漫画控收藏" }));
+    await user.click(screen.getByRole("button", { name: "扫描本地书架" }));
     await user.click(screen.getByRole("button", { name: "书库" }));
     await user.click(
       screen.getByRole("button", { name: "阅读 婚纱之中待到花火散去" }),
@@ -262,7 +269,7 @@ describe("App", () => {
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
   });
 
-  it("从仪表盘一键更新收藏会先确保漫画控运行再写入数据库队列", async () => {
+  it("一键更新收藏不会触发本地书架扫描", async () => {
     const user = userEvent.setup();
     queueMangaConUpdatesMock.mockResolvedValue({
       backupPath:
@@ -291,14 +298,14 @@ describe("App", () => {
         executablePath: approvedDefaultPaths.mangaConExecutable,
         maxUpdates: 500,
       });
-      expect(syncBookshelfMatchesMock).toHaveBeenCalled();
     });
     expect(
       ensureMangaConRunningMock.mock.invocationCallOrder[1],
     ).toBeLessThan(queueMangaConUpdatesMock.mock.invocationCallOrder[0]);
+    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
     expect(
       screen.getAllByText(
-        "书架扫描完成：收藏 0 条，匹配 0 条，缺失 0 条，暂未匹配历史文件夹 0 个",
+        "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",
       ).length,
     ).toBeGreaterThan(0);
   });

@@ -130,7 +130,6 @@ function App() {
       setImportMessage(
         `已导入 ${summary.imported} 条收藏，书架匹配稍后执行`,
       );
-      await syncBookshelfLibrary();
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -198,7 +197,6 @@ function App() {
       if (result.queued > 0 || result.skippedExisting > 0) {
         startRepairMonitor();
       }
-      await syncBookshelfLibrary();
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
