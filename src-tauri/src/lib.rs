@@ -50,7 +50,12 @@ use crate::{
         window::MangaConWindow,
     },
 };
-use std::{collections::HashSet, path::PathBuf, thread, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    thread,
+    time::Duration,
+};
 
 const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
 const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
@@ -312,6 +317,14 @@ async fn sync_bookshelf_matches(
 }
 
 #[tauri::command]
+async fn load_imported_comics(database_path: String) -> Result<Vec<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || load_imported_comics_inner(database_path))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn scan_local_chapters(comic_id: String, comic_directory: String) -> Result<Vec<Chapter>, String> {
     scan_comic_chapters(&comic_id, comic_directory).map_err(|err| err.to_string())
 }
@@ -526,9 +539,18 @@ fn import_favorites_inner(
     let mut comics = import_mangacon_favorites(favorites_path)?;
     let mut db = CompanionDatabase::open(database_path)?;
     db.migrate()?;
+    let existing_by_id: HashMap<String, Comic> = db
+        .list_comics()?
+        .into_iter()
+        .map(|comic| (comic.id.clone(), comic))
+        .collect();
 
     for comic in &mut comics {
-        comic.scan_status = domain::ScanStatus::Imported;
+        if let Some(existing) = existing_by_id.get(&comic.id) {
+            preserve_local_index_metadata(comic, existing);
+        } else {
+            comic.scan_status = domain::ScanStatus::Imported;
+        }
     }
     db.upsert_comics(&comics)?;
 
@@ -537,6 +559,23 @@ fn import_favorites_inner(
         matched: 0,
         favorites: comics,
     })
+}
+
+fn load_imported_comics_inner(database_path: String) -> anyhow::Result<Vec<Comic>> {
+    let db = CompanionDatabase::open(database_path)?;
+    db.migrate()?;
+    db.list_comics()
+}
+
+fn preserve_local_index_metadata(imported: &mut Comic, existing: &Comic) {
+    imported.local_path = existing.local_path.clone();
+    imported.cover_path = existing.cover_path.clone();
+    imported.chapter_count = existing.chapter_count;
+    imported.image_count = existing.image_count;
+    imported.latest_chapter_title = existing.latest_chapter_title.clone();
+    imported.read_progress_page = existing.read_progress_page;
+    imported.scan_status = existing.scan_status;
+    imported.has_update = existing.has_update;
 }
 
 fn sync_bookshelf_matches_inner(
@@ -892,6 +931,7 @@ pub fn run() {
             greet,
             import_favorites,
             sync_bookshelf_matches,
+            load_imported_comics,
             scan_local_chapters,
             list_chapter_pages,
             find_mangacon_windows,
@@ -976,6 +1016,100 @@ mod tests {
             summary.favorites[0].scan_status,
             domain::ScanStatus::Imported
         );
+    }
+
+    #[test]
+    fn import_favorites_preserves_existing_local_index_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let favorites_path = temp.path().join("favorites.json");
+        let db_path = temp.path().join("state.sqlite");
+        let local_path = temp.path().join("bookshelf").join("Indexed");
+        let cover_path = temp
+            .path()
+            .join(".mangacon-companion")
+            .join("covers")
+            .join("31.png");
+        fs::create_dir_all(&local_path).expect("local dir");
+        fs::create_dir_all(cover_path.parent().expect("cover parent")).expect("cover dir");
+        fs::write(&cover_path, b"cover").expect("cover");
+        fs::write(
+            &favorites_path,
+            r#"{"favorites":[{"location":"Indexed","name":"Indexed","tags":["tag"],"uri":"cp:indexed"}]}"#,
+        )
+        .expect("favorites fixture");
+
+        let db = CompanionDatabase::open(&db_path).expect("db open");
+        db.migrate().expect("migrate");
+        let mut comic = domain::Comic::from_mangacon_favorite(
+            "Indexed",
+            "Indexed",
+            "cp:indexed",
+            None,
+            vec!["old".to_string()],
+        );
+        comic.local_path = Some(local_path.clone());
+        comic.cover_path = Some(cover_path.clone());
+        comic.chapter_count = 12;
+        comic.image_count = 345;
+        comic.latest_chapter_title = Some("第12话".to_string());
+        comic.scan_status = domain::ScanStatus::Matched;
+        comic.has_update = true;
+        db.upsert_comic(&comic).expect("seed indexed comic");
+        drop(db);
+
+        let summary = import_favorites_inner(
+            Some(favorites_path.display().to_string()),
+            Some(temp.path().display().to_string()),
+            db_path.display().to_string(),
+        )
+        .expect("import summary");
+
+        assert_eq!(summary.imported, 1);
+        assert_eq!(summary.favorites[0].local_path.as_ref(), Some(&local_path));
+        assert_eq!(summary.favorites[0].cover_path.as_ref(), Some(&cover_path));
+        assert_eq!(summary.favorites[0].chapter_count, 12);
+        assert_eq!(summary.favorites[0].image_count, 345);
+        assert_eq!(
+            summary.favorites[0].latest_chapter_title.as_deref(),
+            Some("第12话")
+        );
+        assert_eq!(
+            summary.favorites[0].scan_status,
+            domain::ScanStatus::Matched
+        );
+        assert!(summary.favorites[0].has_update);
+    }
+
+    #[test]
+    fn load_imported_comics_reads_existing_companion_index_without_scanning() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("state.sqlite");
+        let local_path = temp.path().join("bookshelf").join("Indexed");
+        fs::create_dir_all(&local_path).expect("local dir");
+        let db = CompanionDatabase::open(&db_path).expect("db open");
+        db.migrate().expect("migrate");
+        let mut comic = domain::Comic::from_mangacon_favorite(
+            "Indexed",
+            "Indexed",
+            "cp:indexed",
+            None,
+            Vec::new(),
+        );
+        comic.local_path = Some(local_path.clone());
+        comic.chapter_count = 3;
+        comic.image_count = 90;
+        comic.scan_status = domain::ScanStatus::Matched;
+        db.upsert_comic(&comic).expect("seed comic");
+        drop(db);
+
+        let comics = load_imported_comics_inner(db_path.display().to_string())
+            .expect("load imported comics");
+
+        assert_eq!(comics.len(), 1);
+        assert_eq!(comics[0].local_path.as_ref(), Some(&local_path));
+        assert_eq!(comics[0].chapter_count, 3);
+        assert_eq!(comics[0].image_count, 90);
+        assert_eq!(comics[0].scan_status, domain::ScanStatus::Matched);
     }
 
     #[test]

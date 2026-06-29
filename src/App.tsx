@@ -17,6 +17,7 @@ import {
   ensureMangaConRunning,
   getMangaConTaskStatus,
   importFavorites,
+  loadImportedComics,
   queueMangaConUpdates,
   repairMangaConFailedTasks,
   syncBookshelfMatches,
@@ -84,6 +85,22 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+
+    loadImportedComics({
+      databasePath: approvedDefaultPaths.databasePath,
+    })
+      .then((loadedFavorites) => {
+        if (cancelled || loadedFavorites.length === 0) {
+          return;
+        }
+        setFavorites(loadedFavorites);
+      })
+      .catch((cause) => {
+        if (cancelled) {
+          return;
+        }
+        setImportMessage(cause instanceof Error ? cause.message : String(cause));
+      });
 
     ensureMangaConReady()
       .then((result) => {

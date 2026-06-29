@@ -333,10 +333,9 @@ fn list_badged_update_candidates(connection: &Connection) -> Result<Vec<MangaCon
     let mut statement = connection.prepare(
         r#"
         SELECT m.rowid, v.rowid, m.name, m.uri, m.domain, m.location, v.key, v.title
-        FROM mc3_badges b
-        JOIN mc3_mangas m ON m.rowid = b.id
-        JOIN mc3_volumes v ON v.mid = m.rowid AND v.status = 1
-        WHERE b.category = 1
+        FROM mc3_volumes v
+        JOIN mc3_mangas m ON m.rowid = v.mid
+        WHERE v.status = 1
         ORDER BY m.rowid, v.rowid
         "#,
     )?;
@@ -540,6 +539,36 @@ mod tests {
             .expect("badge count");
         assert_eq!(volume_status, 0);
         assert_eq!(badge_count, 0);
+    }
+
+    #[test]
+    fn queues_status_one_volumes_even_when_manga_badge_is_missing() {
+        let (_temp, path) = create_fixture_db();
+        let connection = Connection::open(&path).expect("open");
+        connection
+            .execute("DELETE FROM mc3_badges WHERE category = 1 AND id = 31", [])
+            .expect("delete badge");
+        drop(connection);
+
+        let result = queue_all_badged_updates(&path, None).expect("queue updates");
+
+        assert_eq!(result.total_updates, 1);
+        assert_eq!(result.queued, 1);
+        assert_eq!(result.tasks[0].uri, "cp:jianmingyidongdescp");
+        assert_eq!(
+            result.tasks[0].volume_key,
+            "b1b787e2-7252-11f1-98ad-fa163e02432f"
+        );
+
+        let connection = Connection::open(path).expect("reopen");
+        let volume_status: i64 = connection
+            .query_row(
+                "SELECT status FROM mc3_volumes WHERE rowid = 37246",
+                [],
+                |row| row.get(0),
+            )
+            .expect("updated volume status");
+        assert_eq!(volume_status, 0);
     }
 
     #[test]

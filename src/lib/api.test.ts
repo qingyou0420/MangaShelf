@@ -7,6 +7,7 @@ import {
   getAutomationStatus,
   importFavorites,
   listChapterPages,
+  loadImportedComics,
   listenFavoriteUpdateRecoveryEvents,
   launchMangaCon,
   openFirstUpdatedComic,
@@ -130,6 +131,37 @@ describe("importFavorites", () => {
       orphaned: 841,
       favorites: [{ coverPath: expect.stringContaining("Covers") }],
     });
+  });
+
+  it("calls Rust load_imported_comics command", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "cp:night",
+        name: "若世界處於黑夜",
+        location: "若世界處於黑夜",
+        sourceUri: "cp:night",
+        sourceScheme: "cp",
+        tags: [],
+        localPath: "E:\\书架\\若世界處於黑夜",
+        coverPath: "E:\\书架\\.mangacon-companion\\covers\\31.png",
+        chapterCount: 1,
+        imageCount: 2,
+        latestChapterTitle: "第02话",
+        readProgressPage: 0,
+        scanStatus: "matched",
+        hasUpdate: true,
+      },
+    ]);
+
+    const result = await loadImportedComics({
+      databasePath: "E:\\书架\\mangacon-companion.sqlite",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("load_imported_comics", {
+      databasePath: "E:\\书架\\mangacon-companion.sqlite",
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].localPath).toContain("若世界處於黑夜");
   });
 
   it("封装本地章节和图片页 commands", async () => {

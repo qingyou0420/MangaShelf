@@ -9,6 +9,7 @@ import type {
   ImportFavoritesResult,
   LaunchMangaConResult,
   LocalChapter,
+  MangaConFavorite,
   MangaConBadgeScanResult,
   MangaConTaskStatus,
   MangaConWindow,
@@ -38,6 +39,10 @@ export interface SyncBookshelfMatchesOptions {
   bookshelfRoot: string;
   databasePath: string;
   mangaConDatabasePath: string;
+}
+
+export interface LoadImportedComicsOptions {
+  databasePath: string;
 }
 
 export interface LaunchMangaConOptions {
@@ -104,6 +109,14 @@ export function syncBookshelfMatches(
     bookshelfRoot: options.bookshelfRoot,
     databasePath: options.databasePath,
     mangaConDatabasePath: options.mangaConDatabasePath,
+  });
+}
+
+export function loadImportedComics(
+  options: LoadImportedComicsOptions,
+): Promise<MangaConFavorite[]> {
+  return invoke<MangaConFavorite[]>("load_imported_comics", {
+    databasePath: options.databasePath,
   });
 }
 

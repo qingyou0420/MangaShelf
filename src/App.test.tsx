@@ -7,6 +7,7 @@ import {
   getMangaConTaskStatus,
   importFavorites,
   listChapterPages,
+  loadImportedComics,
   listenFavoriteUpdateRecoveryEvents,
   queueMangaConUpdates,
   repairMangaConFailedTasks,
@@ -28,6 +29,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
   getMangaConTaskStatus: vi.fn(),
   importFavorites: vi.fn(),
   listChapterPages: vi.fn(),
+  loadImportedComics: vi.fn(),
   listenFavoriteUpdateRecoveryEvents: vi.fn(),
   queueMangaConUpdates: vi.fn(),
   repairMangaConFailedTasks: vi.fn(),
@@ -40,6 +42,7 @@ const ensureMangaConRunningMock = vi.mocked(ensureMangaConRunning);
 const getMangaConTaskStatusMock = vi.mocked(getMangaConTaskStatus);
 const importFavoritesMock = vi.mocked(importFavorites);
 const listChapterPagesMock = vi.mocked(listChapterPages);
+const loadImportedComicsMock = vi.mocked(loadImportedComics);
 const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
   listenFavoriteUpdateRecoveryEvents,
 );
@@ -104,6 +107,7 @@ describe("App", () => {
     getMangaConTaskStatusMock.mockReset();
     importFavoritesMock.mockReset();
     listChapterPagesMock.mockReset();
+    loadImportedComicsMock.mockReset();
     listenFavoriteUpdateRecoveryEventsMock.mockReset();
     queueMangaConUpdatesMock.mockReset();
     repairMangaConFailedTasksMock.mockReset();
@@ -123,6 +127,7 @@ describe("App", () => {
       finishedTasks: 0,
       totalErrors: 0,
     });
+    loadImportedComicsMock.mockResolvedValue([]);
     repairMangaConFailedTasksMock.mockResolvedValue({
       backupPath:
         "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-2",
@@ -164,6 +169,21 @@ describe("App", () => {
     expect(screen.getAllByText("漫画控已启动，正在检索收藏更新...").length).toBeGreaterThan(
       0,
     );
+  });
+
+  it("启动时加载已有伴侣索引且不扫描书架", async () => {
+    loadImportedComicsMock.mockResolvedValue(syncedFavorites);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(loadImportedComicsMock).toHaveBeenCalledWith({
+        databasePath: approvedDefaultPaths.databasePath,
+      });
+    });
+    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
+    const favoritesMetric = screen.getByLabelText("收藏统计");
+    expect(within(favoritesMetric).getByText("2")).toBeInTheDocument();
   });
 
   it("导入收藏不自动扫描书架，手动扫描后才同步本地索引和封面", async () => {
