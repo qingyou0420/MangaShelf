@@ -3,6 +3,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -61,6 +62,14 @@ pub struct RepairMangaConFailedTasksResult {
     pub total_failed: usize,
     pub requeued: usize,
     pub tasks: Vec<RequeuedMangaConRepairTask>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MangaConMangaCacheRecord {
+    pub rowid: i64,
+    pub uri: String,
+    pub cover_path: Option<PathBuf>,
+    pub has_update: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +233,44 @@ pub fn requeue_failed_tasks_for_repair(
         requeued: tasks.len(),
         tasks,
     })
+}
+
+pub fn read_manga_cache_records(
+    database_path: impl AsRef<Path>,
+) -> Result<HashMap<String, MangaConMangaCacheRecord>> {
+    let database_path = database_path.as_ref();
+    let covers_dir = database_path
+        .parent()
+        .map(|parent| parent.join("Covers"))
+        .unwrap_or_else(|| PathBuf::from("Covers"));
+    let connection = Connection::open(database_path)?;
+    let mut statement = connection.prepare(
+        r#"
+        SELECT m.rowid, m.uri,
+               EXISTS(
+                   SELECT 1
+                   FROM mc3_badges b
+                   WHERE b.category = 1 AND b.id = m.rowid AND COALESCE(b.value, 0) > 0
+               )
+        FROM mc3_mangas m
+        "#,
+    )?;
+    let rows = statement.query_map([], |row| {
+        let rowid: i64 = row.get(0)?;
+        let cover_path = covers_dir.join(rowid.to_string());
+        Ok(MangaConMangaCacheRecord {
+            rowid,
+            uri: row.get(1)?,
+            cover_path: cover_path.exists().then_some(cover_path),
+            has_update: row.get::<_, i64>(2)? != 0,
+        })
+    })?;
+
+    let records = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(records
+        .into_iter()
+        .map(|record| (record.uri.clone(), record))
+        .collect())
 }
 
 fn backup_database(database_path: &Path) -> Result<PathBuf> {

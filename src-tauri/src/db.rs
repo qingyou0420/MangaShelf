@@ -41,10 +41,13 @@ impl CompanionDatabase {
                 source_scheme TEXT,
                 source_domain TEXT,
                 local_path TEXT,
+                cover_path TEXT,
                 chapter_count INTEGER NOT NULL DEFAULT 0,
                 image_count INTEGER NOT NULL DEFAULT 0,
+                latest_chapter_title TEXT,
                 read_progress_page INTEGER NOT NULL DEFAULT 0,
                 scan_status TEXT NOT NULL DEFAULT 'pending',
+                has_update INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -78,6 +81,9 @@ impl CompanionDatabase {
             );
             "#,
         )?;
+        self.ensure_comics_column("cover_path", "TEXT")?;
+        self.ensure_comics_column("latest_chapter_title", "TEXT")?;
+        self.ensure_comics_column("has_update", "INTEGER NOT NULL DEFAULT 0")?;
         Ok(())
     }
 
@@ -210,7 +216,8 @@ impl CompanionDatabase {
         let mut statement = self.connection.prepare(
             r#"
             SELECT id, name, location, source_uri, source_scheme, source_domain, local_path,
-                   chapter_count, image_count, read_progress_page, scan_status
+                   cover_path, chapter_count, image_count, latest_chapter_title,
+                   read_progress_page, scan_status, has_update
             FROM comics
             ORDER BY location
             "#,
@@ -220,6 +227,7 @@ impl CompanionDatabase {
             let id: String = row.get(0)?;
             let tags = self.tags_for_comic(&id).unwrap_or_default();
             let local_path: Option<String> = row.get(6)?;
+            let cover_path: Option<String> = row.get(7)?;
 
             Ok(Comic {
                 id,
@@ -230,10 +238,13 @@ impl CompanionDatabase {
                 source_domain: row.get(5)?,
                 tags,
                 local_path: local_path.map(Into::into),
-                chapter_count: row.get::<_, i64>(7)? as usize,
-                image_count: row.get::<_, i64>(8)? as usize,
-                read_progress_page: row.get::<_, i64>(9)? as u32,
-                scan_status: ScanStatus::from_db_value(&row.get::<_, String>(10)?),
+                cover_path: cover_path.map(Into::into),
+                chapter_count: row.get::<_, i64>(8)? as usize,
+                image_count: row.get::<_, i64>(9)? as usize,
+                latest_chapter_title: row.get(10)?,
+                read_progress_page: row.get::<_, i64>(11)? as u32,
+                scan_status: ScanStatus::from_db_value(&row.get::<_, String>(12)?),
+                has_update: row.get::<_, i64>(13)? != 0,
             })
         })?;
 
@@ -273,6 +284,17 @@ impl CompanionDatabase {
         Ok(())
     }
 
+    pub fn replace_chapters_for_comic(&self, comic_id: &str, chapters: &[Chapter]) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM chapters WHERE comic_id = ?1",
+            params![comic_id],
+        )?;
+        for chapter in chapters {
+            self.upsert_chapter(chapter)?;
+        }
+        Ok(())
+    }
+
     pub fn list_chapters_for_comic(&self, comic_id: &str) -> Result<Vec<Chapter>> {
         let mut statement = self.connection.prepare(
             r#"
@@ -308,6 +330,19 @@ impl CompanionDatabase {
         rows.collect()
     }
 
+    fn ensure_comics_column(&self, column: &str, definition: &str) -> Result<()> {
+        let mut statement = self.connection.prepare("PRAGMA table_info(comics)")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+        let columns = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        if !columns.iter().any(|existing| existing == column) {
+            self.connection.execute(
+                &format!("ALTER TABLE comics ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     fn count_rows(&self, table: &str) -> Result<i64> {
         let sql = match table {
@@ -340,13 +375,18 @@ fn upsert_comic_on(connection: &Connection, comic: &Comic) -> Result<()> {
         .local_path
         .as_ref()
         .map(|path| path_to_string_lossy(path.as_path()));
+    let cover_path = comic
+        .cover_path
+        .as_ref()
+        .map(|path| path_to_string_lossy(path.as_path()));
     connection.execute(
         r#"
         INSERT INTO comics (
             id, name, location, source_uri, source_scheme, source_domain, local_path,
-            chapter_count, image_count, read_progress_page, scan_status, updated_at
+            cover_path, chapter_count, image_count, latest_chapter_title,
+            read_progress_page, scan_status, has_update, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             location = excluded.location,
@@ -354,10 +394,13 @@ fn upsert_comic_on(connection: &Connection, comic: &Comic) -> Result<()> {
             source_scheme = excluded.source_scheme,
             source_domain = excluded.source_domain,
             local_path = excluded.local_path,
+            cover_path = excluded.cover_path,
             chapter_count = excluded.chapter_count,
             image_count = excluded.image_count,
+            latest_chapter_title = excluded.latest_chapter_title,
             read_progress_page = excluded.read_progress_page,
             scan_status = excluded.scan_status,
+            has_update = excluded.has_update,
             updated_at = CURRENT_TIMESTAMP
         "#,
         params![
@@ -368,10 +411,13 @@ fn upsert_comic_on(connection: &Connection, comic: &Comic) -> Result<()> {
             comic.source_scheme,
             comic.source_domain,
             local_path,
+            cover_path,
             comic.chapter_count as i64,
             comic.image_count as i64,
+            comic.latest_chapter_title,
             comic.read_progress_page as i64,
             comic.scan_status.as_str(),
+            i64::from(comic.has_update),
         ],
     )?;
 

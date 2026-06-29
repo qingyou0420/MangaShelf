@@ -11,9 +11,11 @@ import {
   queueMangaConUpdates,
   repairMangaConFailedTasks,
   scanLocalChapters,
+  syncBookshelfMatches,
   triggerAllFavoriteUpdatesWithRecovery,
 } from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
+import type { MangaConFavorite } from "./lib/types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
@@ -30,6 +32,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
   queueMangaConUpdates: vi.fn(),
   repairMangaConFailedTasks: vi.fn(),
   scanLocalChapters: vi.fn(),
+  syncBookshelfMatches: vi.fn(),
   triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
 }));
 
@@ -40,12 +43,60 @@ const listChapterPagesMock = vi.mocked(listChapterPages);
 const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
   listenFavoriteUpdateRecoveryEvents,
 );
-const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
 const queueMangaConUpdatesMock = vi.mocked(queueMangaConUpdates);
 const repairMangaConFailedTasksMock = vi.mocked(repairMangaConFailedTasks);
+const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
+const syncBookshelfMatchesMock = vi.mocked(syncBookshelfMatches);
 const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
   triggerAllFavoriteUpdatesWithRecovery,
 );
+
+const importedFavorites: MangaConFavorite[] = [
+  {
+    id: "cp:hzzsddhhshct",
+    name: "婚纱之中待到花火散去",
+    location: "婚纱之中待到花火散去",
+    tags: ["测试作者"],
+    sourceUri: "cp:hzzsddhhshct",
+    sourceScheme: "cp",
+    sourceDomain: "www.2025copy.com",
+    chapterCount: 0,
+    imageCount: 0,
+    readProgressPage: 0,
+    scanStatus: "imported",
+  },
+  {
+    id: "mg:37753",
+    name: "航海士样本",
+    location: "航海士样本",
+    tags: [],
+    sourceUri: "mg:37753",
+    sourceScheme: "mg",
+    sourceDomain: "www.manhuagui.com",
+    chapterCount: 0,
+    imageCount: 0,
+    readProgressPage: 0,
+    scanStatus: "imported",
+  },
+];
+
+const syncedFavorites: MangaConFavorite[] = [
+  {
+    ...importedFavorites[0],
+    localPath: "E:\\书架\\婚纱之中待到花火散去",
+    coverPath: "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\Covers\\31",
+    chapterCount: 1,
+    imageCount: 2,
+    latestChapterTitle: "第01话",
+    scanStatus: "matched",
+    hasUpdate: true,
+  },
+  {
+    ...importedFavorites[1],
+    scanStatus: "missing",
+    hasUpdate: false,
+  },
+];
 
 describe("App", () => {
   beforeEach(() => {
@@ -57,7 +108,9 @@ describe("App", () => {
     queueMangaConUpdatesMock.mockReset();
     repairMangaConFailedTasksMock.mockReset();
     scanLocalChaptersMock.mockReset();
+    syncBookshelfMatchesMock.mockReset();
     triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
+
     ensureMangaConRunningMock.mockResolvedValue({
       launched: false,
       launchPid: null,
@@ -80,6 +133,14 @@ describe("App", () => {
       confirm: { found: false, clicked: false, dialogTitle: null },
       tasks: [],
     });
+    syncBookshelfMatchesMock.mockResolvedValue({
+      imported: 0,
+      scanned: 0,
+      matched: 0,
+      missing: 0,
+      orphaned: 0,
+      favorites: [],
+    });
   });
 
   afterEach(() => {
@@ -100,44 +161,25 @@ describe("App", () => {
         executablePath: approvedDefaultPaths.mangaConExecutable,
       });
     });
-    expect(
-      screen.getAllByText("漫画控已启动，正在检索收藏更新...").length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("漫画控已启动，正在检索收藏更新...").length).toBeGreaterThan(
+      0,
+    );
   });
 
-  it("导入漫画控收藏后刷新仪表盘和书库", async () => {
+  it("导入漫画控收藏后同步书架和封面", async () => {
     const user = userEvent.setup();
     importFavoritesMock.mockResolvedValue({
       imported: 2,
       matched: 0,
-      favorites: [
-        {
-          id: "cp:hzzsddhhshct",
-          name: "婚纱之中待到花火散去",
-          location: "婚纱之中待到花火散去",
-          tags: ["测试作者"],
-          sourceUri: "cp:hzzsddhhshct",
-          sourceScheme: "cp",
-          sourceDomain: "www.2025copy.com",
-          chapterCount: 0,
-          imageCount: 0,
-          readProgressPage: 0,
-          scanStatus: "imported",
-        },
-        {
-          id: "mg:37753",
-          name: "航海士样本",
-          location: "航海士样本",
-          tags: [],
-          sourceUri: "mg:37753",
-          sourceScheme: "mg",
-          sourceDomain: "www.manhuagui.com",
-          chapterCount: 0,
-          imageCount: 0,
-          readProgressPage: 0,
-          scanStatus: "imported",
-        },
-      ],
+      favorites: importedFavorites,
+    });
+    syncBookshelfMatchesMock.mockResolvedValue({
+      imported: 2,
+      scanned: 2,
+      matched: 1,
+      missing: 1,
+      orphaned: 0,
+      favorites: syncedFavorites,
     });
 
     render(<App />);
@@ -149,9 +191,16 @@ describe("App", () => {
         favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
         databasePath: approvedDefaultPaths.databasePath,
       });
+      expect(syncBookshelfMatchesMock).toHaveBeenCalledWith({
+        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
+        databasePath: approvedDefaultPaths.databasePath,
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+      });
     });
     expect(
-      screen.getAllByText("已导入 2 条收藏，书架匹配稍后执行").length,
+      screen.getAllByText(
+        "书架扫描完成：收藏 2 条，匹配 1 条，缺失 1 条，暂未匹配历史文件夹 0 个",
+      ).length,
     ).toBeGreaterThan(0);
 
     const favoritesMetric = screen.getByLabelText("收藏统计");
@@ -160,7 +209,11 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "书库" }));
 
     expect(screen.getAllByText("婚纱之中待到花火散去").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("已导入").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已匹配本地").length).toBeGreaterThan(0);
+    expect(screen.getByAltText("婚纱之中待到花火散去 封面")).toHaveAttribute(
+      "src",
+      expect.stringContaining("Covers"),
+    );
   });
 
   it("可从书库打开已匹配漫画并进入本地阅读器", async () => {
@@ -168,22 +221,15 @@ describe("App", () => {
     importFavoritesMock.mockResolvedValue({
       imported: 1,
       matched: 1,
-      favorites: [
-        {
-          id: "cp:hzzsddhhshct",
-          name: "婚纱之中待到花火散去",
-          location: "婚纱之中待到花火散去",
-          tags: [],
-          sourceUri: "cp:hzzsddhhshct",
-          sourceScheme: "cp",
-          sourceDomain: "www.2025copy.com",
-          localPath: "E:\\书架\\婚纱之中待到花火散去",
-          chapterCount: 1,
-          imageCount: 2,
-          readProgressPage: 0,
-          scanStatus: "matched",
-        },
-      ],
+      favorites: [syncedFavorites[0]],
+    });
+    syncBookshelfMatchesMock.mockResolvedValue({
+      imported: 1,
+      scanned: 1,
+      matched: 1,
+      missing: 0,
+      orphaned: 0,
+      favorites: [syncedFavorites[0]],
     });
     scanLocalChaptersMock.mockResolvedValue([
       {
@@ -210,7 +256,9 @@ describe("App", () => {
       screen.getByRole("button", { name: "阅读 婚纱之中待到花火散去" }),
     );
 
-    expect(await screen.findByRole("heading", { name: "婚纱之中待到花火散去" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "婚纱之中待到花火散去" }),
+    ).toBeInTheDocument();
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
   });
 
@@ -243,13 +291,14 @@ describe("App", () => {
         executablePath: approvedDefaultPaths.mangaConExecutable,
         maxUpdates: 500,
       });
+      expect(syncBookshelfMatchesMock).toHaveBeenCalled();
     });
     expect(
       ensureMangaConRunningMock.mock.invocationCallOrder[1],
     ).toBeLessThan(queueMangaConUpdatesMock.mock.invocationCallOrder[0]);
     expect(
       screen.getAllByText(
-        "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",
+        "书架扫描完成：收藏 0 条，匹配 0 条，缺失 0 条，暂未匹配历史文件夹 0 个",
       ).length,
     ).toBeGreaterThan(0);
   });

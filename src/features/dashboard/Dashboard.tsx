@@ -16,9 +16,11 @@ interface DashboardProps {
   pendingTasks: number;
   importMessage?: string;
   isImporting?: boolean;
+  isScanning?: boolean;
   isUpdating?: boolean;
   isRepairing?: boolean;
   onImportFavorites?: () => void;
+  onScanBookshelf?: () => void;
   onUpdateFavorites?: () => void;
   onRepairFailedTasks?: () => void;
 }
@@ -29,16 +31,16 @@ export function Dashboard({
   pendingTasks,
   importMessage,
   isImporting = false,
+  isScanning = false,
   isUpdating = false,
   isRepairing = false,
   onImportFavorites,
+  onScanBookshelf,
   onUpdateFavorites,
   onRepairFailedTasks,
 }: DashboardProps) {
   const localCount = favorites.filter((item) => item.localPath).length;
-  const pendingUpdates = favorites.filter(
-    (item) => item.scanStatus === "pending" || item.scanStatus === "missing",
-  ).length;
+  const pendingUpdates = favorites.filter((item) => item.hasUpdate).length;
   const totalImages = favorites.reduce((sum, item) => sum + item.imageCount, 0);
 
   return (
@@ -69,6 +71,15 @@ export function Dashboard({
           >
             <Wrench size={18} aria-hidden="true" />
             修复失败图片
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={onScanBookshelf}
+            disabled={isScanning}
+          >
+            <FolderOpen size={18} aria-hidden="true" />
+            扫描本地书架
           </button>
           <button
             className="secondary-action"

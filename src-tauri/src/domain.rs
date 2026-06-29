@@ -73,10 +73,13 @@ pub struct Comic {
     pub source_domain: Option<String>,
     pub tags: Vec<String>,
     pub local_path: Option<PathBuf>,
+    pub cover_path: Option<PathBuf>,
     pub chapter_count: usize,
     pub image_count: usize,
+    pub latest_chapter_title: Option<String>,
     pub read_progress_page: u32,
     pub scan_status: ScanStatus,
+    pub has_update: bool,
 }
 
 impl Comic {
@@ -99,10 +102,13 @@ impl Comic {
             source_domain: domain.map(str::to_string),
             tags,
             local_path: None,
+            cover_path: None,
             chapter_count: 0,
             image_count: 0,
+            latest_chapter_title: None,
             read_progress_page: 0,
             scan_status: ScanStatus::Pending,
+            has_update: false,
         }
     }
 

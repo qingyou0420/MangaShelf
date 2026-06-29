@@ -19,6 +19,7 @@ import {
   importFavorites,
   queueMangaConUpdates,
   repairMangaConFailedTasks,
+  syncBookshelfMatches,
 } from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
 import type { EnsureMangaConRunningResult, MangaConFavorite } from "./lib/types";
@@ -53,6 +54,7 @@ function App() {
   const [favoriteUpdateStartToken, setFavoriteUpdateStartToken] = useState<number>();
   const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
   const [isImporting, setIsImporting] = useState(false);
+  const [isScanningBookshelf, setIsScanningBookshelf] = useState(false);
   const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
   const [isRepairingFailedTasks, setIsRepairingFailedTasks] = useState(false);
   const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
@@ -128,10 +130,38 @@ function App() {
       setImportMessage(
         `已导入 ${summary.imported} 条收藏，书架匹配稍后执行`,
       );
+      await syncBookshelfLibrary();
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setIsImporting(false);
+    }
+  }
+
+  async function syncBookshelfLibrary() {
+    setIsScanningBookshelf(true);
+    setImportMessage("正在扫描本地书架并读取漫画控封面缓存...");
+    try {
+      const summary = await syncBookshelfMatches({
+        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
+        databasePath: approvedDefaultPaths.databasePath,
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+      });
+      setFavorites(summary.favorites);
+      setSelectedReaderComic((current) => {
+        if (!current) {
+          return undefined;
+        }
+
+        return summary.favorites.find((favorite) => favorite.id === current.id);
+      });
+      setImportMessage(
+        `书架扫描完成：收藏 ${summary.imported} 条，匹配 ${summary.matched} 条，缺失 ${summary.missing} 条，暂未匹配历史文件夹 ${summary.orphaned} 个`,
+      );
+    } catch (cause) {
+      setImportMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsScanningBookshelf(false);
     }
   }
 
@@ -168,6 +198,7 @@ function App() {
       if (result.queued > 0 || result.skippedExisting > 0) {
         startRepairMonitor();
       }
+      await syncBookshelfLibrary();
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -290,9 +321,11 @@ function App() {
             pendingTasks={queuedUpdateCount}
             importMessage={importMessage}
             isImporting={isImporting}
+            isScanning={isScanningBookshelf}
             isUpdating={isUpdatingFavorites}
             isRepairing={isRepairingFailedTasks}
             onImportFavorites={handleImportFavorites}
+            onScanBookshelf={syncBookshelfLibrary}
             onUpdateFavorites={handleUpdateFavorites}
             onRepairFailedTasks={handleRepairFailedTasks}
           />

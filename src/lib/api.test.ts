@@ -18,6 +18,7 @@ import {
   scanFavoritesUpdates,
   scanLocalChapters,
   scanMangaConBadges,
+  syncBookshelfMatches,
   triggerAllFavoriteUpdates,
   triggerAllFavoriteUpdatesWithRecovery,
   triggerDetailUpdateDownloadBatch,
@@ -81,6 +82,54 @@ describe("importFavorites", () => {
     });
     expect(summary.imported).toBe(1);
     expect(summary.favorites[0].sourceUri).toBe("cp:ruoshijiechuyuheiye");
+  });
+
+  it("calls Rust sync_bookshelf_matches command", async () => {
+    invokeMock.mockResolvedValue({
+      imported: 447,
+      scanned: 1255,
+      matched: 414,
+      missing: 33,
+      orphaned: 841,
+      favorites: [
+        {
+          id: "cp:night",
+          name: "若世界處於黑夜",
+          location: "若世界處於黑夜",
+          sourceUri: "cp:night",
+          sourceScheme: "cp",
+          tags: [],
+          localPath: "E:\\书架\\若世界處於黑夜",
+          coverPath:
+            "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\Covers\\31",
+          chapterCount: 1,
+          imageCount: 2,
+          latestChapterTitle: "第02话",
+          readProgressPage: 0,
+          scanStatus: "matched",
+          hasUpdate: true,
+        },
+      ],
+    });
+
+    const result = await syncBookshelfMatches({
+      bookshelfRoot: "E:\\书架",
+      databasePath: "E:\\书架\\mangacon-companion.sqlite",
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("sync_bookshelf_matches", {
+      bookshelfRoot: "E:\\书架",
+      databasePath: "E:\\书架\\mangacon-companion.sqlite",
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+    });
+    expect(result).toMatchObject({
+      matched: 414,
+      orphaned: 841,
+      favorites: [{ coverPath: expect.stringContaining("Covers") }],
+    });
   });
 
   it("封装本地章节和图片页 commands", async () => {

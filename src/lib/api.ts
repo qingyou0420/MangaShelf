@@ -17,6 +17,7 @@ import type {
   QueueMangaConUpdatesResult,
   RepairMangaConFailedTasksResult,
   RecoveringFavoriteUpdateResult,
+  SyncBookshelfMatchesResult,
   TriggerDetailDownloadBatchResult,
   TriggerDetailDownloadResult,
   TriggerFavoriteUpdateBatchResult,
@@ -32,6 +33,12 @@ export interface ImportFavoritesOptions {
 }
 
 export type ImportSummary = ImportFavoritesResult;
+
+export interface SyncBookshelfMatchesOptions {
+  bookshelfRoot: string;
+  databasePath: string;
+  mangaConDatabasePath: string;
+}
 
 export interface LaunchMangaConOptions {
   executablePath: string;
@@ -87,6 +94,16 @@ export function importFavorites(
     favoritesJsonPath: options.favoritesJsonPath,
     bookshelfRoot: options.bookshelfRoot,
     databasePath: options.databasePath,
+  });
+}
+
+export function syncBookshelfMatches(
+  options: SyncBookshelfMatchesOptions,
+): Promise<SyncBookshelfMatchesResult> {
+  return invoke<SyncBookshelfMatchesResult>("sync_bookshelf_matches", {
+    bookshelfRoot: options.bookshelfRoot,
+    databasePath: options.databasePath,
+    mangaConDatabasePath: options.mangaConDatabasePath,
   });
 }
 

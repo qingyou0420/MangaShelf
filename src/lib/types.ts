@@ -15,10 +15,13 @@ export interface MangaConFavorite {
   sourceScheme?: string;
   sourceDomain?: string;
   localPath?: string;
+  coverPath?: string | null;
   chapterCount: number;
   imageCount: number;
+  latestChapterTitle?: string | null;
   readProgressPage: number;
   scanStatus: "pending" | "missing" | "matched" | "imported" | "error";
+  hasUpdate?: boolean;
 }
 
 export interface BookshelfMatch {
@@ -44,6 +47,15 @@ export interface LocalChapter {
 export interface ImportFavoritesResult {
   imported: number;
   matched: number;
+  favorites: MangaConFavorite[];
+}
+
+export interface SyncBookshelfMatchesResult {
+  imported: number;
+  scanned: number;
+  matched: number;
+  missing: number;
+  orphaned: number;
   favorites: MangaConFavorite[];
 }
 

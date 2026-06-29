@@ -186,6 +186,27 @@ button {
   gap: 8px;
 }
 
+.filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.filter-tab {
+  min-height: 34px;
+  padding: 0 12px;
+  color: #334155;
+  background: #ffffff;
+  border-color: #cfd8e5;
+}
+
+.filter-tab.active {
+  color: #ffffff;
+  background: #1f5f99;
+  border-color: #1f5f99;
+}
+
 .section-kicker {
   margin: 0 0 4px;
   color: #4d5d72;
@@ -358,6 +379,15 @@ h2 {
   height: 64px;
 }
 
+.book-cover {
+  width: 52px;
+  height: 72px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #eef2f7;
+}
+
 .library-card-main h2 {
   margin-bottom: 4px;
 }
@@ -379,6 +409,12 @@ h2 {
   color: #4a566a;
   background: #f7f9fb;
   font-size: 12px;
+}
+
+.update-tag {
+  color: #8a2b0c;
+  border-color: #f2c7a8;
+  background: #fff4ec;
 }
 
 .library-meta {
@@ -917,6 +953,11 @@ button:disabled {
 
   .view-actions {
     width: 100%;
+  }
+
+  .filter-tabs {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .library-meta {
