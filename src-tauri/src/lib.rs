@@ -239,6 +239,14 @@ pub struct QueueMangaConUpdatesCommandResult {
     pub tasks: Vec<QueuedMangaConTask>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureMangaConRunningResult {
+    pub launched: bool,
+    pub launch_pid: Option<u32>,
+    pub windows: Vec<MangaConWindow>,
+}
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -277,6 +285,11 @@ fn find_mangacon_windows() -> Vec<MangaConWindow> {
 #[tauri::command]
 fn launch_mangacon(executable_path: String) -> Result<LaunchResult, String> {
     launch_mangacon_process(executable_path).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn ensure_mangacon_running(executable_path: String) -> Result<EnsureMangaConRunningResult, String> {
+    ensure_mangacon_running_inner(executable_path)
 }
 
 #[tauri::command]
@@ -433,6 +446,26 @@ fn import_favorites_inner(
         imported: comics.len(),
         matched: 0,
         favorites: comics,
+    })
+}
+
+fn ensure_mangacon_running_inner(
+    executable_path: String,
+) -> Result<EnsureMangaConRunningResult, String> {
+    let windows = mangacon::window::find_mangacon_windows();
+    if !windows.is_empty() {
+        return Ok(EnsureMangaConRunningResult {
+            launched: false,
+            launch_pid: None,
+            windows,
+        });
+    }
+
+    let launch = launch_mangacon_process(executable_path).map_err(|err| err.to_string())?;
+    Ok(EnsureMangaConRunningResult {
+        launched: true,
+        launch_pid: Some(launch.pid),
+        windows: Vec::new(),
     })
 }
 
@@ -697,6 +730,7 @@ pub fn run() {
             list_chapter_pages,
             find_mangacon_windows,
             launch_mangacon,
+            ensure_mangacon_running,
             restart_mangacon,
             get_automation_status,
             scan_mangacon_badges,

@@ -230,6 +230,12 @@ export interface LaunchMangaConResult {
   pid: number;
 }
 
+export interface EnsureMangaConRunningResult {
+  launched: boolean;
+  launchPid?: number | null;
+  windows: MangaConWindow[];
+}
+
 export interface AutomationRunStatus {
   state: "waiting_refresh";
   message: string;

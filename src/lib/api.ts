@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AutomationRunStatus,
   DetailUpdateScanResult,
+  EnsureMangaConRunningResult,
   FavoriteUpdateRecoveryEvent,
   FavoritesUpdateScanResult,
   ImportFavoritesResult,
@@ -102,6 +103,14 @@ export function launchMangaCon(
   options: LaunchMangaConOptions,
 ): Promise<LaunchMangaConResult> {
   return invoke<LaunchMangaConResult>("launch_mangacon", {
+    executablePath: options.executablePath,
+  });
+}
+
+export function ensureMangaConRunning(
+  options: LaunchMangaConOptions,
+): Promise<EnsureMangaConRunningResult> {
+  return invoke<EnsureMangaConRunningResult>("ensure_mangacon_running", {
     executablePath: options.executablePath,
   });
 }

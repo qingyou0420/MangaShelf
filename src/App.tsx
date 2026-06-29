@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Bot,
@@ -13,9 +13,13 @@ import { Dashboard } from "./features/dashboard/Dashboard";
 import { LibraryView } from "./features/library/LibraryView";
 import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
-import { importFavorites, queueMangaConUpdates } from "./lib/api";
+import {
+  ensureMangaConRunning,
+  importFavorites,
+  queueMangaConUpdates,
+} from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
-import type { MangaConFavorite } from "./lib/types";
+import type { EnsureMangaConRunningResult, MangaConFavorite } from "./lib/types";
 
 type AppSection = "dashboard" | "library" | "automation" | "reader" | "settings";
 
@@ -31,6 +35,12 @@ const navigation: Array<{
   { id: "settings", label: "设置", icon: Settings },
 ];
 
+const MANGACON_REFRESH_WAIT_MS = 30_000;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("dashboard");
   const [favorites, setFavorites] = useState<MangaConFavorite[]>([]);
@@ -40,6 +50,53 @@ function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
   const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
+  const mangaConReadyAtRef = useRef(0);
+  const ensureMangaConPromiseRef =
+    useRef<Promise<EnsureMangaConRunningResult> | null>(null);
+
+  async function ensureMangaConReady() {
+    if (!ensureMangaConPromiseRef.current) {
+      ensureMangaConPromiseRef.current = ensureMangaConRunning({
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+      }).finally(() => {
+        ensureMangaConPromiseRef.current = null;
+      });
+    }
+
+    const result = await ensureMangaConPromiseRef.current;
+    if (result.launched) {
+      mangaConReadyAtRef.current = Date.now() + MANGACON_REFRESH_WAIT_MS;
+    } else if (mangaConReadyAtRef.current === 0) {
+      mangaConReadyAtRef.current = Date.now();
+    }
+    return result;
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    ensureMangaConReady()
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setImportMessage(
+          result.launched
+            ? "漫画控已启动，正在检索收藏更新..."
+            : "漫画控已运行，等待本体检索收藏更新...",
+        );
+      })
+      .catch((cause) => {
+        if (cancelled) {
+          return;
+        }
+        setImportMessage(cause instanceof Error ? cause.message : String(cause));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleImportFavorites() {
     setIsImporting(true);
@@ -74,8 +131,18 @@ function App() {
 
   async function handleUpdateFavorites() {
     setIsUpdatingFavorites(true);
-    setImportMessage("正在写入漫画控数据库队列...");
+    setImportMessage("正在确认漫画控本体运行...");
     try {
+      await ensureMangaConReady();
+      const waitMs = Math.max(0, mangaConReadyAtRef.current - Date.now());
+      if (waitMs > 0) {
+        setImportMessage(
+          `漫画控本体正在检索收藏更新，约 ${Math.ceil(waitMs / 1000)} 秒后写入队列...`,
+        );
+        await wait(waitMs);
+      }
+
+      setImportMessage("正在写入漫画控数据库队列...");
       const result = await queueMangaConUpdates({
         mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
         executablePath: approvedDefaultPaths.mangaConExecutable,

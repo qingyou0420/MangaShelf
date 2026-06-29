@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import {
+  ensureMangaConRunning,
   importFavorites,
   listChapterPages,
   listenFavoriteUpdateRecoveryEvents,
@@ -19,6 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("./lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/api")>()),
+  ensureMangaConRunning: vi.fn(),
   importFavorites: vi.fn(),
   listChapterPages: vi.fn(),
   listenFavoriteUpdateRecoveryEvents: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock("./lib/api", async (importOriginal) => ({
   triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
 }));
 
+const ensureMangaConRunningMock = vi.mocked(ensureMangaConRunning);
 const importFavoritesMock = vi.mocked(importFavorites);
 const listChapterPagesMock = vi.mocked(listChapterPages);
 const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
@@ -40,16 +43,41 @@ const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
 
 describe("App", () => {
   beforeEach(() => {
+    ensureMangaConRunningMock.mockReset();
     importFavoritesMock.mockReset();
     listChapterPagesMock.mockReset();
     listenFavoriteUpdateRecoveryEventsMock.mockReset();
     queueMangaConUpdatesMock.mockReset();
     scanLocalChaptersMock.mockReset();
     triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
+    ensureMangaConRunningMock.mockResolvedValue({
+      launched: false,
+      launchPid: null,
+      windows: [{ hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" }],
+    });
   });
 
   afterEach(() => {
     cleanup();
+  });
+
+  it("启动伴侣后自动确保漫画控本体运行", async () => {
+    ensureMangaConRunningMock.mockResolvedValueOnce({
+      launched: true,
+      launchPid: 456,
+      windows: [],
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(ensureMangaConRunningMock).toHaveBeenCalledWith({
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+      });
+    });
+    expect(
+      screen.getAllByText("漫画控已启动，正在检索收藏更新...").length,
+    ).toBeGreaterThan(0);
   });
 
   it("导入漫画控收藏后刷新仪表盘和书库", async () => {
@@ -161,7 +189,7 @@ describe("App", () => {
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
   });
 
-  it("从仪表盘一键更新收藏会写入漫画控数据库队列", async () => {
+  it("从仪表盘一键更新收藏会先确保漫画控运行再写入数据库队列", async () => {
     const user = userEvent.setup();
     queueMangaConUpdatesMock.mockResolvedValue({
       backupPath:
@@ -177,15 +205,23 @@ describe("App", () => {
 
     render(<App />);
 
+    await waitFor(() => {
+      expect(ensureMangaConRunningMock).toHaveBeenCalledTimes(1);
+    });
+
     await user.click(screen.getByRole("button", { name: "一键更新收藏" }));
 
     await waitFor(() => {
+      expect(ensureMangaConRunningMock).toHaveBeenCalledTimes(2);
       expect(queueMangaConUpdatesMock).toHaveBeenCalledWith({
         mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
         executablePath: approvedDefaultPaths.mangaConExecutable,
         maxUpdates: 500,
       });
     });
+    expect(
+      ensureMangaConRunningMock.mock.invocationCallOrder[1],
+    ).toBeLessThan(queueMangaConUpdatesMock.mock.invocationCallOrder[0]);
     expect(
       screen.getAllByText(
         "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",

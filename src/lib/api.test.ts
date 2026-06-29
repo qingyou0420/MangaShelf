@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FAVORITE_UPDATE_RECOVERY_EVENT,
+  ensureMangaConRunning,
   findMangaConWindows,
   getAutomationStatus,
   importFavorites,
@@ -148,6 +149,27 @@ describe("importFavorites", () => {
       executablePath: "E:\\漫画控\\MangaCon.exe",
     });
     expect(invokeMock).toHaveBeenCalledWith("get_automation_status");
+  });
+
+  it("封装确保漫画控运行 command", async () => {
+    invokeMock.mockResolvedValue({
+      launched: false,
+      launchPid: null,
+      windows: [{ hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" }],
+    });
+
+    const result = await ensureMangaConRunning({
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("ensure_mangacon_running", {
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+    });
+    expect(result).toMatchObject({
+      launched: false,
+      launchPid: null,
+      windows: [{ hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" }],
+    });
   });
 
   it("封装漫画控截图红点识别 command", async () => {
