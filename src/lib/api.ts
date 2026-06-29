@@ -10,10 +10,12 @@ import type {
   LaunchMangaConResult,
   LocalChapter,
   MangaConBadgeScanResult,
+  MangaConTaskStatus,
   MangaConWindow,
   OpenComicResult,
   OpenFavoritesResult,
   QueueMangaConUpdatesResult,
+  RepairMangaConFailedTasksResult,
   RecoveringFavoriteUpdateResult,
   TriggerDetailDownloadBatchResult,
   TriggerDetailDownloadResult,
@@ -62,6 +64,16 @@ export interface QueueMangaConUpdatesOptions {
   mangaConDatabasePath: string;
   executablePath: string;
   maxUpdates?: number;
+}
+
+export interface GetMangaConTaskStatusOptions {
+  mangaConDatabasePath: string;
+}
+
+export interface RepairMangaConFailedTasksOptions {
+  mangaConDatabasePath: string;
+  executablePath: string;
+  maxTasks?: number;
 }
 
 export interface TriggerDetailUpdateBatchOptions {
@@ -208,6 +220,27 @@ export function queueMangaConUpdates(
     executablePath: options.executablePath,
     maxUpdates: options.maxUpdates,
   });
+}
+
+export function getMangaConTaskStatus(
+  options: GetMangaConTaskStatusOptions,
+): Promise<MangaConTaskStatus> {
+  return invoke<MangaConTaskStatus>("get_mangacon_task_status", {
+    mangaConDatabasePath: options.mangaConDatabasePath,
+  });
+}
+
+export function repairMangaConFailedTasks(
+  options: RepairMangaConFailedTasksOptions,
+): Promise<RepairMangaConFailedTasksResult> {
+  return invoke<RepairMangaConFailedTasksResult>(
+    "repair_mangacon_failed_tasks",
+    {
+      mangaConDatabasePath: options.mangaConDatabasePath,
+      executablePath: options.executablePath,
+      maxTasks: options.maxTasks,
+    },
+  );
 }
 
 export function listenFavoriteUpdateRecoveryEvents(

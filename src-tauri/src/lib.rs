@@ -19,7 +19,11 @@ use crate::{
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
         confirm::{confirm_continue_download_dialog, ContinueDownloadConfirmResult},
-        database::{queue_all_badged_updates, QueueMangaConUpdatesResult, QueuedMangaConTask},
+        database::{
+            queue_all_badged_updates, read_task_status, requeue_failed_tasks_for_repair,
+            MangaConTaskStatus, QueueMangaConUpdatesResult, QueuedMangaConTask,
+            RepairMangaConFailedTasksResult, RequeuedMangaConRepairTask,
+        },
         navigation::{
             favorite_update_all_limit, open_favorites_from_home as open_mangacon_favorites_inner,
             open_first_badged_comic_from_favorites as open_first_updated_comic_inner,
@@ -241,6 +245,18 @@ pub struct QueueMangaConUpdatesCommandResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RepairMangaConFailedTasksCommandResult {
+    pub backup_path: String,
+    pub total_failed: usize,
+    pub requeued: usize,
+    pub launched: bool,
+    pub launch_pid: Option<u32>,
+    pub confirm: ContinueDownloadConfirmResult,
+    pub tasks: Vec<RequeuedMangaConRepairTask>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EnsureMangaConRunningResult {
     pub launched: bool,
     pub launch_pid: Option<u32>,
@@ -305,6 +321,52 @@ fn get_automation_status() -> AutomationRunStatus {
 #[tauri::command]
 fn scan_mangacon_badges() -> Result<MangaConBadgeScanResult, String> {
     scan_mangacon_badges_inner().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn get_mangacon_task_status(manga_con_database_path: String) -> Result<MangaConTaskStatus, String> {
+    read_task_status(manga_con_database_path).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn repair_mangacon_failed_tasks(
+    manga_con_database_path: String,
+    executable_path: String,
+    max_tasks: Option<u32>,
+) -> Result<RepairMangaConFailedTasksCommandResult, String> {
+    let repair = requeue_failed_tasks_for_repair(manga_con_database_path, max_tasks)
+        .map_err(|err| err.to_string())?;
+    let (launched, launch_pid, confirm) = if repair.requeued > 0 {
+        let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
+        let confirm = confirm_continue_download_dialog_with_wait()?;
+        (true, Some(launch.pid), confirm)
+    } else {
+        (
+            false,
+            None,
+            ContinueDownloadConfirmResult {
+                found: false,
+                clicked: false,
+                dialog_title: None,
+            },
+        )
+    };
+
+    let RepairMangaConFailedTasksResult {
+        backup_path,
+        total_failed,
+        requeued,
+        tasks,
+    } = repair;
+    Ok(RepairMangaConFailedTasksCommandResult {
+        backup_path,
+        total_failed,
+        requeued,
+        launched,
+        launch_pid,
+        confirm,
+        tasks,
+    })
 }
 
 #[tauri::command]
@@ -734,6 +796,8 @@ pub fn run() {
             restart_mangacon,
             get_automation_status,
             scan_mangacon_badges,
+            get_mangacon_task_status,
+            repair_mangacon_failed_tasks,
             open_mangacon_favorites,
             open_first_updated_comic,
             scan_favorites_updates,

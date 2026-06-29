@@ -15,8 +15,10 @@ import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
 import {
   ensureMangaConRunning,
+  getMangaConTaskStatus,
   importFavorites,
   queueMangaConUpdates,
+  repairMangaConFailedTasks,
 } from "./lib/api";
 import { approvedDefaultPaths } from "./lib/defaults";
 import type { EnsureMangaConRunningResult, MangaConFavorite } from "./lib/types";
@@ -36,6 +38,9 @@ const navigation: Array<{
 ];
 
 const MANGACON_REFRESH_WAIT_MS = 30_000;
+const REPAIR_MONITOR_INTERVAL_MS = 30_000;
+const REPAIR_MONITOR_MAX_CHECKS = 120;
+const REPAIR_MAX_TASKS = 200;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -49,10 +54,13 @@ function App() {
   const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
   const [isImporting, setIsImporting] = useState(false);
   const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
+  const [isRepairingFailedTasks, setIsRepairingFailedTasks] = useState(false);
   const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
   const mangaConReadyAtRef = useRef(0);
   const ensureMangaConPromiseRef =
     useRef<Promise<EnsureMangaConRunningResult> | null>(null);
+  const repairMonitorTimerRef = useRef<number | undefined>(undefined);
+  const repairMonitorChecksRef = useRef(0);
 
   async function ensureMangaConReady() {
     if (!ensureMangaConPromiseRef.current) {
@@ -95,6 +103,9 @@ function App() {
 
     return () => {
       cancelled = true;
+      if (repairMonitorTimerRef.current !== undefined) {
+        window.clearTimeout(repairMonitorTimerRef.current);
+      }
     };
   }, []);
 
@@ -154,10 +165,87 @@ function App() {
           ? `已加入漫画控下载队列 ${result.queued} 话，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`
           : `没有新的待加入任务，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`,
       );
+      if (result.queued > 0 || result.skippedExisting > 0) {
+        startRepairMonitor();
+      }
     } catch (cause) {
       setImportMessage(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setIsUpdatingFavorites(false);
+    }
+  }
+
+  function startRepairMonitor(delayMs = REPAIR_MONITOR_INTERVAL_MS) {
+    if (repairMonitorTimerRef.current !== undefined) {
+      window.clearTimeout(repairMonitorTimerRef.current);
+    }
+    repairMonitorTimerRef.current = window.setTimeout(() => {
+      repairMonitorTimerRef.current = undefined;
+      void monitorAndRepairFailedTasks();
+    }, delayMs);
+  }
+
+  async function monitorAndRepairFailedTasks() {
+    repairMonitorChecksRef.current += 1;
+    try {
+      const status = await getMangaConTaskStatus({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+      });
+      if (status.activeTasks > 0) {
+        if (repairMonitorChecksRef.current < REPAIR_MONITOR_MAX_CHECKS) {
+          setImportMessage(
+            `漫画控仍有 ${status.activeTasks} 个下载任务，完成后将自动检查失败图片`,
+          );
+          startRepairMonitor();
+        }
+        return;
+      }
+
+      repairMonitorChecksRef.current = 0;
+      if (status.failedTasks > 0) {
+        await repairFailedTasks("auto");
+      } else {
+        setImportMessage("本轮下载完成，没有失败图片");
+      }
+    } catch (cause) {
+      setImportMessage(
+        `自动检查失败图片失败：${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  }
+
+  async function handleRepairFailedTasks() {
+    await repairFailedTasks("manual");
+  }
+
+  async function repairFailedTasks(mode: "manual" | "auto") {
+    setIsRepairingFailedTasks(true);
+    setImportMessage(
+      mode === "manual" ? "正在扫描失败图片..." : "检测到失败图片，正在重新加入修复队列...",
+    );
+    try {
+      const result = await repairMangaConFailedTasks({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+        maxTasks: REPAIR_MAX_TASKS,
+      });
+      setQueuedUpdateCount(result.requeued);
+      if (result.requeued > 0) {
+        setImportMessage(
+          `已将 ${result.requeued} 个失败任务重新加入漫画控修复队列`,
+        );
+        startRepairMonitor();
+      } else if (result.totalFailed > 0) {
+        setImportMessage(
+          `检测到 ${result.totalFailed} 个失败任务，但本轮没有重新入队`,
+        );
+      } else {
+        setImportMessage("没有需要修复的失败图片");
+      }
+    } catch (cause) {
+      setImportMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setIsRepairingFailedTasks(false);
     }
   }
 
@@ -203,8 +291,10 @@ function App() {
             importMessage={importMessage}
             isImporting={isImporting}
             isUpdating={isUpdatingFavorites}
+            isRepairing={isRepairingFailedTasks}
             onImportFavorites={handleImportFavorites}
             onUpdateFavorites={handleUpdateFavorites}
+            onRepairFailedTasks={handleRepairFailedTasks}
           />
         )}
         {activeSection === "library" && (

@@ -179,6 +179,13 @@ button {
   align-items: center;
 }
 
+.view-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .section-kicker {
   margin: 0 0 4px;
   color: #4d5d72;
@@ -905,6 +912,10 @@ button:disabled {
   .primary-action,
   .secondary-action,
   .run-state button {
+    width: 100%;
+  }
+
+  .view-actions {
     width: 100%;
   }
 

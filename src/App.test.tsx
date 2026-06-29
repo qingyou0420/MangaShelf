@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import {
   ensureMangaConRunning,
+  getMangaConTaskStatus,
   importFavorites,
   listChapterPages,
   listenFavoriteUpdateRecoveryEvents,
   queueMangaConUpdates,
+  repairMangaConFailedTasks,
   scanLocalChapters,
   triggerAllFavoriteUpdatesWithRecovery,
 } from "./lib/api";
@@ -21,15 +23,18 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("./lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/api")>()),
   ensureMangaConRunning: vi.fn(),
+  getMangaConTaskStatus: vi.fn(),
   importFavorites: vi.fn(),
   listChapterPages: vi.fn(),
   listenFavoriteUpdateRecoveryEvents: vi.fn(),
   queueMangaConUpdates: vi.fn(),
+  repairMangaConFailedTasks: vi.fn(),
   scanLocalChapters: vi.fn(),
   triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
 }));
 
 const ensureMangaConRunningMock = vi.mocked(ensureMangaConRunning);
+const getMangaConTaskStatusMock = vi.mocked(getMangaConTaskStatus);
 const importFavoritesMock = vi.mocked(importFavorites);
 const listChapterPagesMock = vi.mocked(listChapterPages);
 const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
@@ -37,6 +42,7 @@ const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
 );
 const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
 const queueMangaConUpdatesMock = vi.mocked(queueMangaConUpdates);
+const repairMangaConFailedTasksMock = vi.mocked(repairMangaConFailedTasks);
 const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
   triggerAllFavoriteUpdatesWithRecovery,
 );
@@ -44,16 +50,35 @@ const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
 describe("App", () => {
   beforeEach(() => {
     ensureMangaConRunningMock.mockReset();
+    getMangaConTaskStatusMock.mockReset();
     importFavoritesMock.mockReset();
     listChapterPagesMock.mockReset();
     listenFavoriteUpdateRecoveryEventsMock.mockReset();
     queueMangaConUpdatesMock.mockReset();
+    repairMangaConFailedTasksMock.mockReset();
     scanLocalChaptersMock.mockReset();
     triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
     ensureMangaConRunningMock.mockResolvedValue({
       launched: false,
       launchPid: null,
       windows: [{ hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" }],
+    });
+    getMangaConTaskStatusMock.mockResolvedValue({
+      totalTasks: 0,
+      activeTasks: 0,
+      failedTasks: 0,
+      finishedTasks: 0,
+      totalErrors: 0,
+    });
+    repairMangaConFailedTasksMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-2",
+      totalFailed: 0,
+      requeued: 0,
+      launched: false,
+      launchPid: null,
+      confirm: { found: false, clicked: false, dialogTitle: null },
+      tasks: [],
     });
   });
 
@@ -226,6 +251,35 @@ describe("App", () => {
       screen.getAllByText(
         "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",
       ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("从仪表盘手动修复失败图片会重新加入漫画控修复队列", async () => {
+    const user = userEvent.setup();
+    repairMangaConFailedTasksMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-2",
+      totalFailed: 2,
+      requeued: 2,
+      launched: true,
+      launchPid: 789,
+      confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
+      tasks: [],
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "修复失败图片" }));
+
+    await waitFor(() => {
+      expect(repairMangaConFailedTasksMock).toHaveBeenCalledWith({
+        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
+        executablePath: approvedDefaultPaths.mangaConExecutable,
+        maxTasks: 200,
+      });
+    });
+    expect(
+      screen.getAllByText("已将 2 个失败任务重新加入漫画控修复队列").length,
     ).toBeGreaterThan(0);
   });
 });

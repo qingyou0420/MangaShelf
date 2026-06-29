@@ -6,6 +6,7 @@ import {
   DownloadCloud,
   FolderOpen,
   RefreshCw,
+  Wrench,
 } from "lucide-react";
 import type { CompanionPaths, MangaConFavorite } from "../../lib/types";
 
@@ -16,8 +17,10 @@ interface DashboardProps {
   importMessage?: string;
   isImporting?: boolean;
   isUpdating?: boolean;
+  isRepairing?: boolean;
   onImportFavorites?: () => void;
   onUpdateFavorites?: () => void;
+  onRepairFailedTasks?: () => void;
 }
 
 export function Dashboard({
@@ -27,8 +30,10 @@ export function Dashboard({
   importMessage,
   isImporting = false,
   isUpdating = false,
+  isRepairing = false,
   onImportFavorites,
   onUpdateFavorites,
+  onRepairFailedTasks,
 }: DashboardProps) {
   const localCount = favorites.filter((item) => item.localPath).length;
   const pendingUpdates = favorites.filter(
@@ -46,24 +51,35 @@ export function Dashboard({
             管理漫画控收藏、书架匹配和阅读准备任务。
           </p>
         </div>
-        <button
-          className="primary-action"
-          type="button"
-          onClick={onUpdateFavorites}
-          disabled={isUpdating}
-        >
-          <RefreshCw size={18} aria-hidden="true" />
-          一键更新收藏
-        </button>
-        <button
-          className="secondary-action"
-          type="button"
-          onClick={onImportFavorites}
-          disabled={isImporting}
-        >
-          <Database size={18} aria-hidden="true" />
-          导入漫画控收藏
-        </button>
+        <div className="view-actions">
+          <button
+            className="primary-action"
+            type="button"
+            onClick={onUpdateFavorites}
+            disabled={isUpdating}
+          >
+            <RefreshCw size={18} aria-hidden="true" />
+            一键更新收藏
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={onRepairFailedTasks}
+            disabled={isRepairing}
+          >
+            <Wrench size={18} aria-hidden="true" />
+            修复失败图片
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={onImportFavorites}
+            disabled={isImporting}
+          >
+            <Database size={18} aria-hidden="true" />
+            导入漫画控收藏
+          </button>
+        </div>
       </div>
 
       <div className="metric-grid" aria-label="概览统计">

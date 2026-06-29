@@ -226,6 +226,33 @@ export interface QueueMangaConUpdatesResult {
   tasks: QueuedMangaConTask[];
 }
 
+export interface MangaConTaskStatus {
+  totalTasks: number;
+  activeTasks: number;
+  failedTasks: number;
+  finishedTasks: number;
+  totalErrors: number;
+}
+
+export interface RequeuedMangaConRepairTask {
+  taskId: number;
+  uri: string;
+  volumeKey: string;
+  location: string;
+  errors: number;
+  orderIndex: number;
+}
+
+export interface RepairMangaConFailedTasksResult {
+  backupPath: string;
+  totalFailed: number;
+  requeued: number;
+  launched: boolean;
+  launchPid?: number | null;
+  confirm: ContinueDownloadConfirmResult;
+  tasks: RequeuedMangaConRepairTask[];
+}
+
 export interface LaunchMangaConResult {
   pid: number;
 }

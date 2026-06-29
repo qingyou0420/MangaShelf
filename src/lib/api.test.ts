@@ -3,6 +3,7 @@ import {
   FAVORITE_UPDATE_RECOVERY_EVENT,
   ensureMangaConRunning,
   findMangaConWindows,
+  getMangaConTaskStatus,
   getAutomationStatus,
   importFavorites,
   listChapterPages,
@@ -11,6 +12,7 @@ import {
   openFirstUpdatedComic,
   openMangaConFavorites,
   queueMangaConUpdates,
+  repairMangaConFailedTasks,
   restartMangaCon,
   scanDetailUpdates,
   scanFavoritesUpdates,
@@ -618,6 +620,72 @@ describe("importFavorites", () => {
       queued: 33,
       skippedExisting: 1,
       clearedUpdateMarkers: 34,
+      launched: true,
+    });
+  });
+
+  it("封装漫画控任务状态 command", async () => {
+    invokeMock.mockResolvedValue({
+      totalTasks: 5,
+      activeTasks: 1,
+      failedTasks: 2,
+      finishedTasks: 4,
+      totalErrors: 3,
+    });
+
+    const result = await getMangaConTaskStatus({
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("get_mangacon_task_status", {
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+    });
+    expect(result).toMatchObject({
+      activeTasks: 1,
+      failedTasks: 2,
+      totalErrors: 3,
+    });
+  });
+
+  it("封装漫画控失败图片修复 command", async () => {
+    invokeMock.mockResolvedValue({
+      backupPath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-2",
+      totalFailed: 2,
+      requeued: 2,
+      launched: true,
+      launchPid: 789,
+      confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
+      tasks: [
+        {
+          taskId: 90,
+          uri: "mhg:55324",
+          volumeKey: "892965",
+          location: "Failed\\第64话",
+          errors: 1,
+          orderIndex: 10,
+        },
+      ],
+    });
+
+    const result = await repairMangaConFailedTasks({
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+      maxTasks: 200,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("repair_mangacon_failed_tasks", {
+      mangaConDatabasePath:
+        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+      executablePath: "E:\\漫画控\\MangaCon.exe",
+      maxTasks: 200,
+    });
+    expect(result).toMatchObject({
+      totalFailed: 2,
+      requeued: 2,
       launched: true,
     });
   });
