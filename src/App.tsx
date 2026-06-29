@@ -203,6 +203,7 @@ function App() {
       const result = await queueMangaConUpdates({
         mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
         executablePath: approvedDefaultPaths.mangaConExecutable,
+        companionDatabasePath: approvedDefaultPaths.databasePath,
         maxUpdates: 500,
       });
       setQueuedUpdateCount(result.queued);

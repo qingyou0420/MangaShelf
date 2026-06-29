@@ -316,6 +316,7 @@ describe("App", () => {
       expect(queueMangaConUpdatesMock).toHaveBeenCalledWith({
         mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
         executablePath: approvedDefaultPaths.mangaConExecutable,
+        companionDatabasePath: approvedDefaultPaths.databasePath,
         maxUpdates: 500,
       });
     });

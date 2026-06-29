@@ -75,6 +75,7 @@ export interface TriggerAllFavoriteUpdatesWithRecoveryOptions {
 export interface QueueMangaConUpdatesOptions {
   mangaConDatabasePath: string;
   executablePath: string;
+  companionDatabasePath?: string;
   maxUpdates?: number;
 }
 
@@ -248,6 +249,7 @@ export function queueMangaConUpdates(
   return invoke<QueueMangaConUpdatesResult>("queue_mangacon_updates", {
     mangaConDatabasePath: options.mangaConDatabasePath,
     executablePath: options.executablePath,
+    companionDatabasePath: options.companionDatabasePath,
     maxUpdates: options.maxUpdates,
   });
 }

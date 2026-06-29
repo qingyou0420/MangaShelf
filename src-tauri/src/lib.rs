@@ -23,7 +23,7 @@ use crate::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
         confirm::{confirm_continue_download_dialog, ContinueDownloadConfirmResult},
         database::{
-            queue_all_badged_updates, read_manga_cache_records, read_task_status,
+            queue_updates_including_local_gaps, read_manga_cache_records, read_task_status,
             requeue_failed_tasks_for_repair, MangaConTaskStatus, QueueMangaConUpdatesResult,
             QueuedMangaConTask, RepairMangaConFailedTasksResult, RequeuedMangaConRepairTask,
         },
@@ -52,7 +52,7 @@ use crate::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
     time::Duration,
 };
@@ -484,10 +484,16 @@ fn trigger_all_favorite_updates_with_recovery(
 fn queue_mangacon_updates(
     manga_con_database_path: String,
     executable_path: String,
+    companion_database_path: Option<String>,
     max_updates: Option<u32>,
 ) -> Result<QueueMangaConUpdatesCommandResult, String> {
-    let queue = queue_all_badged_updates(manga_con_database_path, max_updates)
-        .map_err(|err| err.to_string())?;
+    let companion_database_path = companion_database_path.as_deref().map(Path::new);
+    let queue = queue_updates_including_local_gaps(
+        manga_con_database_path,
+        companion_database_path,
+        max_updates,
+    )
+    .map_err(|err| err.to_string())?;
     let should_refresh_mangacon = queue.queued > 0 || queue.cleared_update_markers > 0;
     let (launched, launch_pid, confirm) = if should_refresh_mangacon {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;

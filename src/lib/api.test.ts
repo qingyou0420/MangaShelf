@@ -687,6 +687,7 @@ describe("importFavorites", () => {
       mangaConDatabasePath:
         "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
       executablePath: "E:\\漫画控\\MangaCon.exe",
+      companionDatabasePath: "E:\\书架\\mangacon-companion.sqlite",
       maxUpdates: 500,
     });
 
@@ -694,6 +695,7 @@ describe("importFavorites", () => {
       mangaConDatabasePath:
         "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
       executablePath: "E:\\漫画控\\MangaCon.exe",
+      companionDatabasePath: "E:\\书架\\mangacon-companion.sqlite",
       maxUpdates: 500,
     });
     expect(result).toMatchObject({

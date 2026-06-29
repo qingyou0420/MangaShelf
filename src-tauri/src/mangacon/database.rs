@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -96,10 +96,23 @@ pub fn queue_all_badged_updates(
     database_path: impl AsRef<Path>,
     max_updates: Option<u32>,
 ) -> Result<QueueMangaConUpdatesResult> {
+    queue_updates_including_local_gaps(database_path, None, max_updates)
+}
+
+pub fn queue_updates_including_local_gaps(
+    database_path: impl AsRef<Path>,
+    companion_database_path: Option<&Path>,
+    max_updates: Option<u32>,
+) -> Result<QueueMangaConUpdatesResult> {
     let backup_path = backup_database(database_path.as_ref())?;
     let mut connection = Connection::open(database_path)?;
     let transaction = connection.transaction()?;
-    let candidates = list_badged_update_candidates(&transaction)?;
+    let mut candidates = list_badged_update_candidates(&transaction)?;
+    if let Some(companion_database_path) = companion_database_path {
+        let gap_candidates =
+            list_missing_local_chapter_candidates(&transaction, companion_database_path)?;
+        append_unique_candidates(&mut candidates, gap_candidates);
+    }
     let mut next_order_index = next_task_order_index(&transaction)?;
     let mut tasks = Vec::new();
     let mut skipped_existing = 0;
@@ -356,6 +369,300 @@ fn list_badged_update_candidates(connection: &Connection) -> Result<Vec<MangaCon
         .map_err(Into::into)
 }
 
+fn list_missing_local_chapter_candidates(
+    manga_connection: &Connection,
+    companion_database_path: &Path,
+) -> Result<Vec<MangaConUpdateCandidate>> {
+    if !companion_database_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let companion = Connection::open(companion_database_path)?;
+    if !table_exists(&companion, "comics")? || !table_exists(&companion, "chapters")? {
+        return Ok(Vec::new());
+    }
+
+    let mut comic_statement = companion.prepare(
+        r#"
+        SELECT id, local_path
+        FROM comics
+        WHERE local_path IS NOT NULL
+          AND TRIM(local_path) <> ''
+          AND scan_status = 'matched'
+        ORDER BY id
+        "#,
+    )?;
+    let comic_ids = comic_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                PathBuf::from(row.get::<_, String>(1)?),
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut candidates = Vec::new();
+    for (comic_id, local_path) in comic_ids {
+        let local_titles = local_chapter_title_index(&companion, &comic_id, &local_path)?;
+        if local_titles.normalized_titles.is_empty() {
+            continue;
+        }
+
+        let mut volume_statement = manga_connection.prepare(
+            r#"
+            SELECT m.rowid, v.rowid, m.name, m.uri, m.domain, m.location, v.key, v.title
+            FROM mc3_mangas m
+            JOIN mc3_volumes v ON v.mid = m.rowid
+            WHERE m.uri = ?1 AND COALESCE(v.status, 0) = 0
+            ORDER BY m.rowid, v.rowid
+            "#,
+        )?;
+        let volume_rows = volume_statement.query_map(params![comic_id], |row| {
+            Ok(MangaConUpdateCandidate {
+                manga_id: row.get(0)?,
+                volume_id: row.get(1)?,
+                manga: row.get(2)?,
+                uri: row.get(3)?,
+                domain: row.get(4)?,
+                manga_location: row.get(5)?,
+                volume_key: row.get(6)?,
+                title: row.get(7)?,
+            })
+        })?;
+
+        for candidate in volume_rows {
+            let candidate = candidate?;
+            if !should_check_local_gap(&candidate.title, &local_titles) {
+                continue;
+            }
+
+            let normalized = normalize_chapter_title_for_gap(&candidate.title);
+            if !local_titles.normalized_titles.contains(&normalized) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+#[derive(Debug)]
+struct LocalChapterTitleIndex {
+    normalized_titles: HashSet<String>,
+    has_regular_chapters: bool,
+    has_volume_chapters: bool,
+}
+
+fn local_chapter_title_index(
+    companion: &Connection,
+    comic_id: &str,
+    local_path: &Path,
+) -> Result<LocalChapterTitleIndex> {
+    if let Some(index) = local_chapter_title_index_from_directory(local_path)? {
+        return Ok(index);
+    }
+
+    let mut statement = companion.prepare("SELECT title FROM chapters WHERE comic_id = ?1")?;
+    let titles = statement
+        .query_map(params![comic_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut normalized_titles = HashSet::new();
+    let mut has_regular_chapters = false;
+    let mut has_volume_chapters = false;
+    for title in titles {
+        let normalized = normalize_chapter_title_for_gap(&title);
+        has_regular_chapters |= is_regular_chapter_title(&normalized);
+        has_volume_chapters |= is_volume_chapter_title(&normalized);
+        normalized_titles.insert(normalized);
+    }
+
+    Ok(LocalChapterTitleIndex {
+        normalized_titles,
+        has_regular_chapters,
+        has_volume_chapters,
+    })
+}
+
+fn local_chapter_title_index_from_directory(
+    local_path: &Path,
+) -> Result<Option<LocalChapterTitleIndex>> {
+    if !local_path.is_dir() {
+        return Ok(None);
+    }
+
+    let mut saw_chapter_directories = false;
+    let mut normalized_titles = HashSet::new();
+    let mut has_regular_chapters = false;
+    let mut has_volume_chapters = false;
+
+    for entry in fs::read_dir(local_path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        saw_chapter_directories = true;
+        if !directory_contains_image(&path)? {
+            continue;
+        }
+
+        let title = entry.file_name().to_string_lossy().trim().to_string();
+        if title.is_empty() {
+            continue;
+        }
+
+        let normalized = normalize_chapter_title_for_gap(&title);
+        has_regular_chapters |= is_regular_chapter_title(&normalized);
+        has_volume_chapters |= is_volume_chapter_title(&normalized);
+        normalized_titles.insert(normalized);
+    }
+
+    if !saw_chapter_directories {
+        return Ok(None);
+    }
+
+    Ok(Some(LocalChapterTitleIndex {
+        normalized_titles,
+        has_regular_chapters,
+        has_volume_chapters,
+    }))
+}
+
+fn directory_contains_image(path: &Path) -> Result<bool> {
+    for entry in fs::read_dir(path)? {
+        let child = entry?.path();
+        if child.is_dir() {
+            if directory_contains_image(&child)? {
+                return Ok(true);
+            }
+        } else if is_gap_image_file(&child) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn is_gap_image_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table_name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn append_unique_candidates(
+    candidates: &mut Vec<MangaConUpdateCandidate>,
+    extra_candidates: Vec<MangaConUpdateCandidate>,
+) {
+    let mut seen = candidates
+        .iter()
+        .map(|candidate| (candidate.uri.clone(), candidate.volume_key.clone()))
+        .collect::<HashSet<_>>();
+
+    for candidate in extra_candidates {
+        let key = (candidate.uri.clone(), candidate.volume_key.clone());
+        if seen.insert(key) {
+            candidates.push(candidate);
+        }
+    }
+}
+
+fn should_check_local_gap(title: &str, local_titles: &LocalChapterTitleIndex) -> bool {
+    let normalized = normalize_chapter_title_for_gap(title);
+    if is_regular_chapter_title(&normalized) {
+        return true;
+    }
+
+    if is_volume_chapter_title(&normalized) {
+        return local_titles.has_volume_chapters || !local_titles.has_regular_chapters;
+    }
+
+    false
+}
+
+fn is_regular_chapter_title(normalized_title: &str) -> bool {
+    normalized_title.contains('话')
+}
+
+fn is_volume_chapter_title(normalized_title: &str) -> bool {
+    normalized_title.contains('卷')
+}
+
+fn normalize_chapter_title_for_gap(title: &str) -> String {
+    let compact = title
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .flat_map(|ch| normalize_chapter_char(ch).to_lowercase())
+        .collect::<String>();
+    strip_digit_padding(&compact)
+}
+
+fn normalize_chapter_char(ch: char) -> char {
+    match ch {
+        '話' => '话',
+        '巻' => '卷',
+        '０' => '0',
+        '１' => '1',
+        '２' => '2',
+        '３' => '3',
+        '４' => '4',
+        '５' => '5',
+        '６' => '6',
+        '７' => '7',
+        '８' => '8',
+        '９' => '9',
+        _ => ch,
+    }
+}
+
+fn strip_digit_padding(value: &str) -> String {
+    let mut output = String::new();
+    let mut digits = String::new();
+
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else {
+            push_unpadded_digits(&mut output, &mut digits);
+            output.push(ch);
+        }
+    }
+    push_unpadded_digits(&mut output, &mut digits);
+
+    output
+}
+
+fn push_unpadded_digits(output: &mut String, digits: &mut String) {
+    if digits.is_empty() {
+        return;
+    }
+
+    let trimmed = digits.trim_start_matches('0');
+    if trimmed.is_empty() {
+        output.push('0');
+    } else {
+        output.push_str(trimmed);
+    }
+    digits.clear();
+}
+
 fn next_task_order_index(connection: &Connection) -> Result<i64> {
     let max_order = connection.query_row("SELECT MAX(order_index) FROM mc3_tasks", [], |row| {
         row.get::<_, Option<i64>>(0)
@@ -569,6 +876,147 @@ mod tests {
             )
             .expect("updated volume status");
         assert_eq!(volume_status, 0);
+    }
+
+    #[test]
+    fn queues_missing_local_chapters_even_when_mangacon_has_no_update_marker() {
+        let (_temp, manga_db_path) = create_fixture_db();
+        let connection = Connection::open(&manga_db_path).expect("open manga db");
+        connection
+            .execute("DELETE FROM mc3_volumes WHERE mid = 31", [])
+            .expect("clear fixture volumes");
+        connection
+            .execute(
+                "INSERT INTO mc3_volumes(rowid, mid, key, title, status) VALUES (?1, ?2, ?3, ?4, 0)",
+                params![37246, 31, "local-one", "第01话"],
+            )
+            .expect("local first chapter");
+        connection
+            .execute(
+                "INSERT INTO mc3_volumes(rowid, mid, key, title, status) VALUES (?1, ?2, ?3, ?4, 0)",
+                params![37247, 31, "local-two", "第02话"],
+            )
+            .expect("local second chapter");
+        connection
+            .execute(
+                "INSERT INTO mc3_volumes(rowid, mid, key, title, status) VALUES (?1, ?2, ?3, ?4, 0)",
+                params![37248, 31, "missing-chapter", "第03话"],
+            )
+            .expect("missing local chapter");
+        connection
+            .execute(
+                "INSERT INTO mc3_volumes(rowid, mid, key, title, status) VALUES (?1, ?2, ?3, ?4, 0)",
+                params![37249, 31, "single-book-volume", "第01卷"],
+            )
+            .expect("single book volume");
+        drop(connection);
+
+        let companion_temp = tempfile::tempdir().expect("companion tempdir");
+        let companion_db_path = companion_temp.path().join("state.sqlite");
+        let companion = Connection::open(&companion_db_path).expect("open companion db");
+        companion
+            .execute_batch(
+                r#"
+                CREATE TABLE comics(id TEXT PRIMARY KEY, local_path TEXT, scan_status TEXT NOT NULL);
+                CREATE TABLE chapters(comic_id TEXT NOT NULL, title TEXT NOT NULL);
+                INSERT INTO comics(id, local_path, scan_status) VALUES ('cp:jianmingyidongdescp', 'E:\books\sample', 'matched');
+                INSERT INTO chapters(comic_id, title) VALUES ('cp:jianmingyidongdescp', '第01話');
+                INSERT INTO chapters(comic_id, title) VALUES ('cp:jianmingyidongdescp', '第2话');
+                "#,
+            )
+            .expect("companion schema");
+        drop(companion);
+
+        let result = queue_updates_including_local_gaps(
+            &manga_db_path,
+            Some(companion_db_path.as_path()),
+            None,
+        )
+        .expect("queue updates");
+
+        assert_eq!(result.total_updates, 1);
+        assert_eq!(result.queued, 1);
+        assert_eq!(result.cleared_update_markers, 0);
+        assert_eq!(result.tasks[0].volume_key, "missing-chapter");
+        assert_eq!(result.tasks[0].title, "第03话");
+
+        let connection = Connection::open(manga_db_path).expect("reopen manga db");
+        let queued_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM mc3_tasks", [], |row| row.get(0))
+            .expect("queued task count");
+        let volume_task_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM mc3_tasks WHERE vk = 'single-book-volume'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("single book volume task count");
+        assert_eq!(queued_count, 1);
+        assert_eq!(volume_task_count, 0);
+    }
+
+    #[test]
+    fn local_gap_detection_uses_real_matched_directory_before_stale_cached_chapters() {
+        let (_temp, manga_db_path) = create_fixture_db();
+        let connection = Connection::open(&manga_db_path).expect("open manga db");
+        connection
+            .execute("DELETE FROM mc3_volumes WHERE mid = 31", [])
+            .expect("clear fixture volumes");
+        for (rowid, key, title) in [
+            (37246_i64, "local-one", "第01话"),
+            (37247_i64, "local-two", "第02话"),
+            (37248_i64, "missing-chapter", "第03话"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO mc3_volumes(rowid, mid, key, title, status) VALUES (?1, 31, ?2, ?3, 0)",
+                    params![rowid, key, title],
+                )
+                .expect("fixture volume");
+        }
+        drop(connection);
+
+        let companion_temp = tempfile::tempdir().expect("companion tempdir");
+        let local_manga_dir = companion_temp.path().join("sample");
+        for title in ["第01話", "第02话"] {
+            let chapter = local_manga_dir.join(title);
+            fs::create_dir_all(&chapter).expect("local chapter dir");
+            fs::write(chapter.join("001.jpg"), b"image").expect("local image");
+        }
+
+        let companion_db_path = companion_temp.path().join("state.sqlite");
+        let companion = Connection::open(&companion_db_path).expect("open companion db");
+        companion
+            .execute_batch(
+                r#"
+                CREATE TABLE comics(id TEXT PRIMARY KEY, local_path TEXT, scan_status TEXT NOT NULL);
+                CREATE TABLE chapters(comic_id TEXT NOT NULL, title TEXT NOT NULL);
+                INSERT INTO chapters(comic_id, title) VALUES ('cp:jianmingyidongdescp', '第01話');
+                INSERT INTO chapters(comic_id, title) VALUES ('cp:jianmingyidongdescp', '第02话');
+                INSERT INTO chapters(comic_id, title) VALUES ('cp:jianmingyidongdescp', '第03话');
+                "#,
+            )
+            .expect("companion schema");
+        companion
+            .execute(
+                "INSERT INTO comics(id, local_path, scan_status) VALUES (?1, ?2, 'matched')",
+                params![
+                    "cp:jianmingyidongdescp",
+                    local_manga_dir.to_string_lossy().as_ref(),
+                ],
+            )
+            .expect("companion comic");
+        drop(companion);
+
+        let result = queue_updates_including_local_gaps(
+            &manga_db_path,
+            Some(companion_db_path.as_path()),
+            None,
+        )
+        .expect("queue updates");
+
+        assert_eq!(result.queued, 1);
+        assert_eq!(result.tasks[0].volume_key, "missing-chapter");
     }
 
     #[test]
