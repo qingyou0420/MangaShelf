@@ -63,6 +63,7 @@ const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
 const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
 const MANGACON_RECOVERY_REFRESH_WAIT_MS: u64 = 12_000;
 const MANGACON_CONTINUE_CONFIRM_ATTEMPTS: usize = 40;
+const MANGACON_EXISTING_CONTINUE_CONFIRM_ATTEMPTS: usize = 4;
 const MANGACON_CONTINUE_CONFIRM_POLL_MS: u64 = 250;
 const FAVORITE_UPDATE_RECOVERY_EVENT: &str = "favorite-update-recovery-event";
 
@@ -764,8 +765,31 @@ fn latest_chapter_title(chapters: &[Chapter]) -> Option<String> {
 fn ensure_mangacon_running_inner(
     executable_path: String,
 ) -> Result<EnsureMangaConRunningResult, String> {
-    let windows = mangacon::window::find_mangacon_windows();
+    ensure_mangacon_running_inner_with_hooks(
+        executable_path,
+        mangacon::window::find_mangacon_windows,
+        |path| launch_mangacon_process(path),
+        confirm_continue_download_dialog_after_restart,
+        confirm_continue_download_dialog_if_present,
+    )
+}
+
+fn ensure_mangacon_running_inner_with_hooks<F, L, C, E>(
+    executable_path: String,
+    find_windows: F,
+    launch_mangacon: L,
+    confirm_after_launch: C,
+    confirm_existing: E,
+) -> Result<EnsureMangaConRunningResult, String>
+where
+    F: FnOnce() -> Vec<MangaConWindow>,
+    L: FnOnce(String) -> Result<LaunchResult, mangacon::process::MangaConProcessError>,
+    C: FnOnce() -> anyhow::Result<ContinueDownloadConfirmResult>,
+    E: FnOnce() -> anyhow::Result<ContinueDownloadConfirmResult>,
+{
+    let windows = find_windows();
     if !windows.is_empty() {
+        let _ = confirm_existing().map_err(|err| err.to_string())?;
         return Ok(EnsureMangaConRunningResult {
             launched: false,
             launch_pid: None,
@@ -773,7 +797,8 @@ fn ensure_mangacon_running_inner(
         });
     }
 
-    let launch = launch_mangacon_process(executable_path).map_err(|err| err.to_string())?;
+    let launch = launch_mangacon(executable_path).map_err(|err| err.to_string())?;
+    let _ = confirm_after_launch().map_err(|err| err.to_string())?;
     Ok(EnsureMangaConRunningResult {
         launched: true,
         launch_pid: Some(launch.pid),
@@ -1018,6 +1043,15 @@ fn confirm_continue_download_dialog_after_restart() -> anyhow::Result<ContinueDo
 {
     poll_continue_download_confirm(
         MANGACON_CONTINUE_CONFIRM_ATTEMPTS,
+        Duration::from_millis(MANGACON_CONTINUE_CONFIRM_POLL_MS),
+        confirm_continue_download_dialog,
+        thread::sleep,
+    )
+}
+
+fn confirm_continue_download_dialog_if_present() -> anyhow::Result<ContinueDownloadConfirmResult> {
+    poll_continue_download_confirm(
+        MANGACON_EXISTING_CONTINUE_CONFIRM_ATTEMPTS,
         Duration::from_millis(MANGACON_CONTINUE_CONFIRM_POLL_MS),
         confirm_continue_download_dialog,
         thread::sleep,
@@ -1408,6 +1442,65 @@ mod tests {
             sleeps,
             vec![Duration::from_millis(10), Duration::from_millis(10)]
         );
+    }
+
+    #[test]
+    fn ensuring_existing_mangacon_also_confirms_continue_dialog() {
+        let window = MangaConWindow {
+            hwnd: 42,
+            title: "漫画控 v3.0.15.58 Beta4".to_string(),
+        };
+        let mut confirm_called = false;
+
+        let result = ensure_mangacon_running_inner_with_hooks(
+            "E:\\漫画控\\MangaCon.exe".to_string(),
+            || vec![window.clone()],
+            |_| panic!("existing MangaCon should not be launched again"),
+            || panic!("existing MangaCon should use existing-window confirmation"),
+            || {
+                confirm_called = true;
+                Ok(ContinueDownloadConfirmResult {
+                    found: true,
+                    clicked: true,
+                    dialog_title: Some("漫画控".to_string()),
+                })
+            },
+        )
+        .expect("ensure MangaCon running");
+
+        assert!(!result.launched);
+        assert_eq!(result.windows, vec![window]);
+        assert!(confirm_called);
+    }
+
+    #[test]
+    fn ensuring_launched_mangacon_confirms_continue_dialog_after_launch() {
+        let mut launched_path = None;
+        let mut confirm_called = false;
+
+        let result = ensure_mangacon_running_inner_with_hooks(
+            "E:\\漫画控\\MangaCon.exe".to_string(),
+            Vec::new,
+            |path| {
+                launched_path = Some(path);
+                Ok(LaunchResult { pid: 3052 })
+            },
+            || {
+                confirm_called = true;
+                Ok(ContinueDownloadConfirmResult {
+                    found: true,
+                    clicked: true,
+                    dialog_title: Some("漫画控".to_string()),
+                })
+            },
+            || panic!("newly launched MangaCon should use launch confirmation"),
+        )
+        .expect("ensure MangaCon running");
+
+        assert!(result.launched);
+        assert_eq!(result.launch_pid, Some(3052));
+        assert_eq!(launched_path.as_deref(), Some("E:\\漫画控\\MangaCon.exe"));
+        assert!(confirm_called);
     }
 
     #[test]
