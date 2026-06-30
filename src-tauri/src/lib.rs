@@ -21,7 +21,7 @@ use crate::{
     favorites::import_mangacon_favorites,
     mangacon::{
         capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
-        confirm::ContinueDownloadConfirmResult,
+        confirm::{confirm_continue_download_dialog, ContinueDownloadConfirmResult},
         database::{
             prepare_unfinished_tasks_for_resume, queue_updates_including_local_gaps,
             read_manga_cache_records, read_task_status, requeue_failed_tasks_for_repair,
@@ -62,6 +62,8 @@ use std::{
 const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
 const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
 const MANGACON_RECOVERY_REFRESH_WAIT_MS: u64 = 12_000;
+const MANGACON_CONTINUE_CONFIRM_ATTEMPTS: usize = 40;
+const MANGACON_CONTINUE_CONFIRM_POLL_MS: u64 = 250;
 const FAVORITE_UPDATE_RECOVERY_EVENT: &str = "favorite-update-recovery-event";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,11 +392,9 @@ fn repair_mangacon_failed_tasks(
         .map_err(|err| err.to_string())?;
     let (launched, launch_pid, confirm) = if repair.requeued > 0 {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        (
-            true,
-            Some(launch.pid),
-            database_auto_resume_confirm_result(),
-        )
+        let confirm =
+            confirm_continue_download_dialog_after_restart().map_err(|err| err.to_string())?;
+        (true, Some(launch.pid), confirm)
     } else {
         (
             false,
@@ -433,11 +433,9 @@ fn resume_mangacon_unfinished_tasks(
         .map_err(|err| err.to_string())?;
     let (launched, launch_pid, confirm) = if resume.resume_configured {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        (
-            true,
-            Some(launch.pid),
-            database_auto_resume_confirm_result(),
-        )
+        let confirm =
+            confirm_continue_download_dialog_after_restart().map_err(|err| err.to_string())?;
+        (true, Some(launch.pid), confirm)
     } else {
         (
             false,
@@ -553,11 +551,9 @@ fn queue_mangacon_updates(
         queue.queued > 0 || queue.skipped_existing > 0 || queue.cleared_update_markers > 0;
     let (launched, launch_pid, confirm) = if should_refresh_mangacon {
         let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        (
-            true,
-            Some(launch.pid),
-            database_auto_resume_confirm_result(),
-        )
+        let confirm =
+            confirm_continue_download_dialog_after_restart().map_err(|err| err.to_string())?;
+        (true, Some(launch.pid), confirm)
     } else {
         (
             false,
@@ -1018,6 +1014,42 @@ fn favorite_update_recovery_restart_limit(max_restarts: Option<u32>) -> u32 {
         .clamp(0, FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS)
 }
 
+fn confirm_continue_download_dialog_after_restart() -> anyhow::Result<ContinueDownloadConfirmResult>
+{
+    poll_continue_download_confirm(
+        MANGACON_CONTINUE_CONFIRM_ATTEMPTS,
+        Duration::from_millis(MANGACON_CONTINUE_CONFIRM_POLL_MS),
+        confirm_continue_download_dialog,
+        thread::sleep,
+    )
+}
+
+fn poll_continue_download_confirm<F, S>(
+    attempts: usize,
+    interval: Duration,
+    mut confirm: F,
+    mut sleep: S,
+) -> anyhow::Result<ContinueDownloadConfirmResult>
+where
+    F: FnMut() -> anyhow::Result<ContinueDownloadConfirmResult>,
+    S: FnMut(Duration),
+{
+    let attempts = attempts.max(1);
+
+    for attempt in 0..attempts {
+        let result = confirm()?;
+        if result.clicked || result.found {
+            return Ok(result);
+        }
+
+        if attempt + 1 < attempts {
+            sleep(interval);
+        }
+    }
+
+    Ok(database_auto_resume_confirm_result())
+}
+
 fn database_auto_resume_confirm_result() -> ContinueDownloadConfirmResult {
     ContinueDownloadConfirmResult {
         found: false,
@@ -1338,6 +1370,43 @@ mod tests {
         assert_eq!(
             synced.latest_chapter_title.as_deref(),
             Some("Cached chapter")
+        );
+    }
+
+    #[test]
+    fn restart_confirm_polls_until_continue_dialog_can_be_clicked() {
+        let mut attempts = 0;
+        let mut sleeps = Vec::new();
+
+        let result = poll_continue_download_confirm(
+            4,
+            Duration::from_millis(10),
+            || {
+                attempts += 1;
+                Ok(if attempts < 3 {
+                    ContinueDownloadConfirmResult {
+                        found: false,
+                        clicked: false,
+                        dialog_title: None,
+                    }
+                } else {
+                    ContinueDownloadConfirmResult {
+                        found: true,
+                        clicked: true,
+                        dialog_title: Some("漫画控".to_string()),
+                    }
+                })
+            },
+            |duration| sleeps.push(duration),
+        )
+        .expect("poll confirm");
+
+        assert!(result.clicked);
+        assert_eq!(result.dialog_title.as_deref(), Some("漫画控"));
+        assert_eq!(attempts, 3);
+        assert_eq!(
+            sleeps,
+            vec![Duration::from_millis(10), Duration::from_millis(10)]
         );
     }
 
