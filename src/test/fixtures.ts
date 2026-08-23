@@ -1,1 +1,1 @@
-export { approvedDefaultPaths, sampleFavorite } from "../lib/defaults";
+export { defaultLibraryPaths, sampleComic } from "../lib/defaults";

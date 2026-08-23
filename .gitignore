@@ -25,3 +25,14 @@ dist-ssr
 
 # Codex isolated worktrees
 .worktrees/
+
+# Local build / packaging artifacts (not source)
+release/
+*.exe
+src-tauri/target/
+
+# Local experimental dumps / installers (not source)
+mangacon-ui/
+mangacon-ui-extract/
+tools/
+docs/mangacon-ui-merge-delivery.md

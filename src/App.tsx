@@ -1,431 +1,261 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  BookOpen,
-  Bot,
-  Gauge,
-  Library,
-  MonitorCog,
-  Settings,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Library, LibraryBig, Settings } from "lucide-react";
 import "./App.css";
-import { AutomationView } from "./features/automation/AutomationView";
-import { Dashboard } from "./features/dashboard/Dashboard";
 import { LibraryView } from "./features/library/LibraryView";
+import { SeriesView } from "./features/library/SeriesView";
 import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
-import {
-  ensureMangaConRunning,
-  getMangaConTaskStatus,
-  importFavorites,
-  loadImportedComics,
-  queueMangaConUpdates,
-  repairMangaConFailedTasks,
-  resumeMangaConUnfinishedTasks,
-  syncBookshelfMatches,
-} from "./lib/api";
-import { approvedDefaultPaths } from "./lib/defaults";
-import type {
-  EnsureMangaConRunningResult,
-  MangaConFavorite,
-  MangaConTaskStatus,
-} from "./lib/types";
+import { useAppUpdate } from "./hooks/useAppUpdate";
+import { useLibrarySession } from "./hooks/useLibrarySession";
+import { useToast } from "./hooks/useToast";
+import { listCoverCandidates, openPath, setComicCover } from "./lib/api";
+import { cacheRootForPath, loadTheme, saveTheme } from "./lib/defaults";
 
-type AppSection = "dashboard" | "library" | "automation" | "reader" | "settings";
+type AppSection = "library" | "settings";
 
 const navigation: Array<{
   id: AppSection;
   label: string;
-  icon: typeof Gauge;
+  icon: typeof Library;
 }> = [
-  { id: "dashboard", label: "仪表盘", icon: Gauge },
   { id: "library", label: "书库", icon: Library },
-  { id: "automation", label: "自动化", icon: Bot },
-  { id: "reader", label: "阅读器", icon: BookOpen },
   { id: "settings", label: "设置", icon: Settings },
 ];
 
-const MANGACON_REFRESH_WAIT_MS = 30_000;
-const REPAIR_MONITOR_INTERVAL_MS = 30_000;
-const REPAIR_MONITOR_MAX_CHECKS = 120;
-const REPAIR_MAX_TASKS = 200;
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 function App() {
-  const [activeSection, setActiveSection] = useState<AppSection>("dashboard");
-  const [favorites, setFavorites] = useState<MangaConFavorite[]>([]);
-  const [selectedReaderComic, setSelectedReaderComic] = useState<MangaConFavorite>();
-  const [favoriteUpdateStartToken, setFavoriteUpdateStartToken] = useState<number>();
-  const [importMessage, setImportMessage] = useState("尚未导入漫画控收藏");
-  const [isImporting, setIsImporting] = useState(false);
-  const [isScanningBookshelf, setIsScanningBookshelf] = useState(false);
-  const [isUpdatingFavorites, setIsUpdatingFavorites] = useState(false);
-  const [isRepairingFailedTasks, setIsRepairingFailedTasks] = useState(false);
-  const [isResumingUnfinishedTasks, setIsResumingUnfinishedTasks] = useState(false);
-  const [isRefreshingTaskStatus, setIsRefreshingTaskStatus] = useState(false);
-  const [queuedUpdateCount, setQueuedUpdateCount] = useState(0);
-  const [mangaConTaskStatus, setMangaConTaskStatus] =
-    useState<MangaConTaskStatus>();
-  const [lastMangaConRestart, setLastMangaConRestart] = useState<string>();
-  const mangaConReadyAtRef = useRef(0);
-  const ensureMangaConPromiseRef =
-    useRef<Promise<EnsureMangaConRunningResult> | null>(null);
-  const repairMonitorTimerRef = useRef<number | undefined>(undefined);
-  const repairMonitorChecksRef = useRef(0);
-
-  async function ensureMangaConReady() {
-    if (!ensureMangaConPromiseRef.current) {
-      ensureMangaConPromiseRef.current = ensureMangaConRunning({
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-      }).finally(() => {
-        ensureMangaConPromiseRef.current = null;
-      });
-    }
-
-    const result = await ensureMangaConPromiseRef.current;
-    if (result.launched) {
-      mangaConReadyAtRef.current = Date.now() + MANGACON_REFRESH_WAIT_MS;
-    } else if (mangaConReadyAtRef.current === 0) {
-      mangaConReadyAtRef.current = Date.now();
-    }
-    return result;
-  }
+  const [activeSection, setActiveSection] = useState<AppSection>("library");
+  const [theme, setTheme] = useState<"light" | "dark">(loadTheme);
+  const { toastMessage, showToast } = useToast();
+  const {
+    appVersion,
+    availableAppUpdate,
+    isOpeningAppInstaller,
+    installAppUpdate,
+  } = useAppUpdate();
+  const {
+    paths,
+    comics,
+    seriesComic,
+    selectedComic,
+    readerChapterId,
+    seriesChapters,
+    seriesChaptersMessage,
+    statusMessage,
+    isScanning,
+    scanProgress,
+    failedItems,
+    bookshelfMissing,
+    readerService,
+    handleScanLibrary,
+    handleCancelScan,
+    handleToggleFavorite,
+    handleSaveMetadata,
+    handleOpenSeries,
+    handleRescan,
+    handleReadComic,
+    handleCloseReader,
+    handleReaderPrefs,
+    applyPaths,
+    handleDeleteComic,
+    handlePickBookshelf,
+    handleClearProgress,
+    setSeriesComic,
+    setStatusMessage,
+    replaceComic,
+  } = useLibrarySession(showToast);
 
   useEffect(() => {
-    let cancelled = false;
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
-    loadImportedComics({
-      databasePath: approvedDefaultPaths.databasePath,
-    })
-      .then((loadedFavorites) => {
-        if (cancelled || loadedFavorites.length === 0) {
-          return;
-        }
-        setFavorites(loadedFavorites);
-      })
-      .catch((cause) => {
-        if (cancelled) {
-          return;
-        }
-        setImportMessage(cause instanceof Error ? cause.message : String(cause));
-      });
+  const isReading = Boolean(selectedComic?.localPath);
+  const favoriteCount = comics.filter((comic) => comic.favorited).length;
 
-    ensureMangaConReady()
-      .then((result) => {
-        if (cancelled) {
-          return;
-        }
-        setImportMessage(
-          result.launched
-            ? "漫画控已启动，正在检索收藏更新..."
-            : "漫画控已运行，等待本体检索收藏更新...",
-        );
-      })
-      .catch((cause) => {
-        if (cancelled) {
-          return;
-        }
-        setImportMessage(cause instanceof Error ? cause.message : String(cause));
-      });
-
-    return () => {
-      cancelled = true;
-      if (repairMonitorTimerRef.current !== undefined) {
-        window.clearTimeout(repairMonitorTimerRef.current);
-      }
-    };
-  }, []);
-
-  async function handleImportFavorites() {
-    setIsImporting(true);
-    setImportMessage("正在导入漫画控收藏...");
+  async function handleInstallAppUpdate() {
     try {
-      const summary = await importFavorites({
-        favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
-        databasePath: approvedDefaultPaths.databasePath,
-      });
-      setFavorites(summary.favorites);
-      setSelectedReaderComic((current) => {
-        if (!current) {
-          return undefined;
-        }
-
-        return summary.favorites.find((favorite) => favorite.id === current.id);
-      });
-      setImportMessage(
-        `已导入 ${summary.imported} 条收藏，书架匹配稍后执行`,
-      );
-    } catch (cause) {
-      setImportMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setIsImporting(false);
-    }
-  }
-
-  async function syncBookshelfLibrary() {
-    setIsScanningBookshelf(true);
-    setImportMessage("正在扫描本地书架并读取漫画控封面缓存...");
-    try {
-      const summary = await syncBookshelfMatches({
-        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
-        databasePath: approvedDefaultPaths.databasePath,
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-      });
-      setFavorites(summary.favorites);
-      setSelectedReaderComic((current) => {
-        if (!current) {
-          return undefined;
-        }
-
-        return summary.favorites.find((favorite) => favorite.id === current.id);
-      });
-      setImportMessage(
-        `书架扫描完成：收藏 ${summary.imported} 条，匹配 ${summary.matched} 条，缺失 ${summary.missing} 条，暂未匹配历史文件夹 ${summary.orphaned} 个`,
-      );
-    } catch (cause) {
-      setImportMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setIsScanningBookshelf(false);
-    }
-  }
-
-  function handleReadFavorite(favorite: MangaConFavorite) {
-    setSelectedReaderComic(favorite);
-    setActiveSection("reader");
-  }
-
-  async function handleUpdateFavorites() {
-    setIsUpdatingFavorites(true);
-    setImportMessage("正在确认漫画控本体运行...");
-    try {
-      await ensureMangaConReady();
-      const waitMs = Math.max(0, mangaConReadyAtRef.current - Date.now());
-      if (waitMs > 0) {
-        setImportMessage(
-          `漫画控本体正在检索收藏更新，约 ${Math.ceil(waitMs / 1000)} 秒后写入队列...`,
-        );
-        await wait(waitMs);
-      }
-
-      setImportMessage("正在写入漫画控数据库队列...");
-      const result = await queueMangaConUpdates({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-        companionDatabasePath: approvedDefaultPaths.databasePath,
-        maxUpdates: 500,
-      });
-      setQueuedUpdateCount(result.queued);
-      recordMangaConRestart(result.launched, result.launchPid);
-      setImportMessage(
-        result.queued > 0
-          ? `已加入漫画控下载队列 ${result.queued} 话，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`
-          : `没有新的待加入任务，跳过已有任务 ${result.skippedExisting} 话，清理更新标记 ${result.clearedUpdateMarkers} 处`,
-      );
-      if (result.queued > 0 || result.skippedExisting > 0) {
-        startRepairMonitor();
-      }
-    } catch (cause) {
-      setImportMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setIsUpdatingFavorites(false);
-    }
-  }
-
-  function startRepairMonitor(delayMs = REPAIR_MONITOR_INTERVAL_MS) {
-    if (repairMonitorTimerRef.current !== undefined) {
-      window.clearTimeout(repairMonitorTimerRef.current);
-    }
-    repairMonitorTimerRef.current = window.setTimeout(() => {
-      repairMonitorTimerRef.current = undefined;
-      void monitorAndRepairFailedTasks();
-    }, delayMs);
-  }
-
-  async function monitorAndRepairFailedTasks() {
-    repairMonitorChecksRef.current += 1;
-    try {
-      const status = await getMangaConTaskStatus({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-      });
-      setMangaConTaskStatus(status);
-      if (status.activeTasks > 0) {
-        if (repairMonitorChecksRef.current < REPAIR_MONITOR_MAX_CHECKS) {
-          setImportMessage(
-            `漫画控仍有 ${status.activeTasks} 个下载任务，完成后将自动检查失败图片`,
-          );
-          startRepairMonitor();
-        }
+      const message = await installAppUpdate();
+      if (!message || !availableAppUpdate) {
         return;
       }
-
-      repairMonitorChecksRef.current = 0;
-      if (status.failedTasks > 0) {
-        await repairFailedTasks("auto");
-      } else {
-        setImportMessage("本轮下载完成，没有失败图片");
-      }
-    } catch (cause) {
-      setImportMessage(
-        `自动检查失败图片失败：${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    }
-  }
-
-  async function handleRepairFailedTasks() {
-    await repairFailedTasks("manual");
-  }
-
-  async function handleRefreshTaskStatus() {
-    setIsRefreshingTaskStatus(true);
-    try {
-      const status = await getMangaConTaskStatus({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-      });
-      setMangaConTaskStatus(status);
-      setQueuedUpdateCount(status.activeTasks);
-      setImportMessage(
-        `漫画控任务：未完成 ${status.activeTasks}，失败 ${status.failedTasks}，错误 ${status.totalErrors}`,
+      showToast(message);
+      setStatusMessage(
+        `正在安装 v${availableAppUpdate.version}（${availableAppUpdate.fileName}）`,
       );
     } catch (cause) {
-      setImportMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setIsRefreshingTaskStatus(false);
-    }
-  }
-
-  async function handleResumeUnfinishedTasks() {
-    setIsResumingUnfinishedTasks(true);
-    setImportMessage("正在唤醒漫画控已有未完成下载任务...");
-    try {
-      const result = await resumeMangaConUnfinishedTasks({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-      });
-      setQueuedUpdateCount(result.totalUnfinished);
-      recordMangaConRestart(result.launched, result.launchPid);
-      await handleRefreshTaskStatus();
-      if (result.resumeConfigured) {
-        setImportMessage(
-          `已唤醒漫画控继续 ${result.totalUnfinished} 个未完成下载任务`,
-        );
-        startRepairMonitor();
-      } else {
-        setImportMessage("漫画控当前没有未完成下载任务");
-      }
-    } catch (cause) {
-      setImportMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setIsResumingUnfinishedTasks(false);
-    }
-  }
-
-  async function repairFailedTasks(mode: "manual" | "auto") {
-    setIsRepairingFailedTasks(true);
-    setImportMessage(
-      mode === "manual" ? "正在扫描失败图片..." : "检测到失败图片，正在重新加入修复队列...",
-    );
-    try {
-      const result = await repairMangaConFailedTasks({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-        maxTasks: REPAIR_MAX_TASKS,
-      });
-      setQueuedUpdateCount(result.requeued);
-      recordMangaConRestart(result.launched, result.launchPid);
-      if (result.requeued > 0) {
-        setImportMessage(
-          `已将 ${result.requeued} 个失败任务重新加入漫画控修复队列`,
-        );
-        startRepairMonitor();
-      } else if (result.totalFailed > 0) {
-        setImportMessage(
-          `检测到 ${result.totalFailed} 个失败任务，但本轮没有重新入队`,
-        );
-      } else {
-        setImportMessage("没有需要修复的失败图片");
-      }
-    } catch (cause) {
-      setImportMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setIsRepairingFailedTasks(false);
-    }
-  }
-
-  function recordMangaConRestart(launched: boolean, pid?: number | null) {
-    if (launched) {
-      setLastMangaConRestart(pid ? `已重启漫画控 PID ${pid}` : "已重启漫画控");
+      const message =
+        cause instanceof Error ? cause.message : String(cause ?? "无法打开安装包");
+      showToast(message);
+      setStatusMessage(message);
     }
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar" aria-label="主导航">
-        <div className="brand-block">
-          <div className="brand-icon">
-            <MonitorCog size={22} aria-hidden="true" />
-          </div>
-          <div>
-            <strong>漫画控伴侣</strong>
-            <span>Windows 本地工具</span>
-          </div>
+    <main
+      className={[
+        isReading ? "app-shell reading-mode" : "app-shell",
+        theme === "dark" ? "theme-dark" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {toastMessage && (
+        <div className="app-toast" role="status" aria-live="polite">
+          {toastMessage}
         </div>
+      )}
+      {!isReading && (
+        <aside className="sidebar" aria-label="主导航">
+          <div className="brand-block">
+            <div className="brand-icon">
+              <LibraryBig size={20} aria-hidden="true" />
+            </div>
+            <div className="brand-text">
+              <strong>MangaShelf</strong>
+              <span className="brand-sub">漫画书架</span>
+              <div className="brand-version-row">
+                {appVersion && (
+                  <span
+                    className="brand-version"
+                    data-testid="sidebar-app-version"
+                  >
+                    v{appVersion}
+                  </span>
+                )}
+                {availableAppUpdate && (
+                  <button
+                    type="button"
+                    className="sidebar-update-btn"
+                    data-testid="sidebar-app-update"
+                    disabled={isOpeningAppInstaller}
+                    title={`发现云端版本 v${availableAppUpdate.version}，点击下载安装`}
+                    onClick={() => void handleInstallAppUpdate()}
+                  >
+                    {isOpeningAppInstaller
+                      ? "…"
+                      : `更新 v${availableAppUpdate.version}`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
 
-        <nav className="nav-list">
-          {navigation.map(({ id, label, icon: Icon }) => (
-            <button
-              className={activeSection === id ? "nav-item active" : "nav-item"}
-              type="button"
-              key={id}
-              onClick={() => setActiveSection(id)}
-            >
-              <Icon size={18} aria-hidden="true" />
-              <span>{label}</span>
-            </button>
-          ))}
-        </nav>
+          <nav className="nav-list">
+            {navigation.map(({ id, label, icon: Icon }) => (
+              <button
+                className={
+                  activeSection === id && !seriesComic ? "nav-item active" : "nav-item"
+                }
+                type="button"
+                key={id}
+                onClick={() => {
+                  setSeriesComic(undefined);
+                  setActiveSection(id);
+                }}
+              >
+                <Icon size={17} aria-hidden="true" />
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
 
-        <div className="sidebar-footer">
-          <span>状态</span>
-          <strong>{importMessage}</strong>
-        </div>
-      </aside>
+          <div className="sidebar-stats" aria-label="摘要">
+            <div>
+              <span>书库</span>
+              <strong>{comics.length}</strong>
+            </div>
+            <div>
+              <span>收藏</span>
+              <strong>{favoriteCount}</strong>
+            </div>
+          </div>
 
-      <section className="content-shell">
-        {activeSection === "dashboard" && (
-          <Dashboard
-            paths={approvedDefaultPaths}
-            favorites={favorites}
-            pendingTasks={queuedUpdateCount}
-            mangaConTaskStatus={mangaConTaskStatus}
-            lastMangaConRestart={lastMangaConRestart}
-            importMessage={importMessage}
-            isImporting={isImporting}
-            isScanning={isScanningBookshelf}
-            isUpdating={isUpdatingFavorites}
-            isRepairing={isRepairingFailedTasks}
-            isResuming={isResumingUnfinishedTasks}
-            isRefreshingTaskStatus={isRefreshingTaskStatus}
-            onImportFavorites={handleImportFavorites}
-            onScanBookshelf={syncBookshelfLibrary}
-            onUpdateFavorites={handleUpdateFavorites}
-            onRepairFailedTasks={handleRepairFailedTasks}
-            onResumeUnfinishedTasks={handleResumeUnfinishedTasks}
-            onRefreshTaskStatus={handleRefreshTaskStatus}
+          <div className="sidebar-footer" role="status" aria-live="polite">
+            {statusMessage}
+          </div>
+        </aside>
+      )}
+
+      <section className={isReading ? "content-shell reader-shell-host" : "content-shell"}>
+        {isReading ? (
+          <ReaderView
+            comic={selectedComic}
+            initialChapterId={readerChapterId}
+            onBack={() => {
+              handleCloseReader();
+              setActiveSection("library");
+            }}
+            onComicChange={(comic) => void handleReaderPrefs(comic)}
+            onToggleFavorite={(comic) => void handleToggleFavorite(comic)}
+            service={readerService}
           />
-        )}
-        {activeSection === "library" && (
-          <LibraryView favorites={favorites} onReadFavorite={handleReadFavorite} />
-        )}
-        {activeSection === "automation" && (
-          <AutomationView
-            autoStartRecoveryToken={favoriteUpdateStartToken}
-            onAutoStartRecoveryHandled={() => setFavoriteUpdateStartToken(undefined)}
+        ) : seriesComic && activeSection === "library" ? (
+          <SeriesView
+            comic={seriesComic}
+            chapters={seriesChapters}
+            chaptersMessage={seriesChaptersMessage}
+            onBack={() => setSeriesComic(undefined)}
+            onRead={(comic, chapter) => handleReadComic(comic, "series", chapter)}
+            onToggleFavorite={(comic) => void handleToggleFavorite(comic)}
+            onSaveMetadata={(comic, draft) => void handleSaveMetadata(comic, draft)}
+            onOpenFolder={(path) => {
+              void openPath(path).catch((cause) => {
+                showToast(cause instanceof Error ? cause.message : String(cause));
+              });
+            }}
+            onRescan={(comic) => handleRescan(comic)}
+            onListCovers={(comic) => listCoverCandidates(comic.localPath ?? "")}
+            onClearProgress={(comic) => void handleClearProgress(comic)}
+            onSetCover={(comic, sourcePath) => {
+              void setComicCover({
+                bookshelfRoot: cacheRootForPath(
+                  comic.localPath ?? paths.bookshelfRoot,
+                  paths,
+                ),
+                databasePath: paths.databasePath,
+                comicId: comic.id,
+                sourcePath,
+              }).then((next) => {
+                if (next) {
+                  replaceComic(next);
+                }
+              });
+            }}
           />
+        ) : (
+          <>
+            {activeSection === "library" && (
+              <LibraryView
+                comics={comics}
+                onOpenSeries={(comic) => {
+                  handleOpenSeries(comic);
+                  setActiveSection("library");
+                }}
+                onReadComic={(comic) => handleReadComic(comic, "library")}
+                onScanLibrary={() => void handleScanLibrary()}
+                onCancelScan={() => void handleCancelScan()}
+                onToggleFavorite={(comic) => void handleToggleFavorite(comic)}
+                onSaveMetadata={(comic, draft) =>
+                  void handleSaveMetadata(comic, draft)
+                }
+                onPickBookshelf={() => void handlePickBookshelf()}
+                onDeleteComic={(comic) => void handleDeleteComic(comic)}
+                isScanning={isScanning}
+                scanProgress={scanProgress}
+                failedItems={failedItems}
+                bookshelfMissing={bookshelfMissing}
+              />
+            )}
+            {activeSection === "settings" && (
+              <SettingsView
+                paths={paths}
+                onSavePaths={applyPaths}
+                appVersion={appVersion}
+                theme={theme}
+                onThemeChange={(next) => setTheme(saveTheme(next))}
+              />
+            )}
+          </>
         )}
-        {activeSection === "reader" && <ReaderView comic={selectedReaderComic} />}
-        {activeSection === "settings" && <SettingsView paths={approvedDefaultPaths} />}
       </section>
     </main>
   );

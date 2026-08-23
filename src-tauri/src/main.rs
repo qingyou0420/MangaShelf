@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    mangacon_companion_lib::run()
+    manga_library_lib::run()
 }

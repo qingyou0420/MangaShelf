@@ -1,37 +1,40 @@
-export interface CompanionPaths {
-  mangaConExecutable: string;
-  mangaConFavoritesJson: string;
-  mangaConDatabase: string;
+export type ScanStatus = "pending" | "missing" | "matched" | "imported" | "error";
+export type ReadingDirection = "ltr" | "rtl";
+export type FitMode = "width" | "height" | "contain" | "original";
+export type ReadMode = "page" | "scroll" | "spread";
+export type ChapterKind = "regular" | "volume" | "machine_translation" | "other";
+
+export interface LibraryPaths {
   bookshelfRoot: string;
   databasePath: string;
+  extraRoots?: string[];
 }
 
-export interface MangaConFavorite {
+export interface LibraryComic {
   id: string;
   name: string;
   location: string;
+  author?: string | null;
   tags: string[];
-  sourceUri: string;
-  sourceScheme?: string;
-  sourceDomain?: string;
   localPath?: string;
   coverPath?: string | null;
   chapterCount: number;
   imageCount: number;
   latestChapterTitle?: string | null;
   readProgressPage: number;
-  scanStatus: "pending" | "missing" | "matched" | "imported" | "error";
-  hasUpdate?: boolean;
+  lastReadChapterId?: string | null;
+  lastReadChapterTitle?: string | null;
+  lastReadAt?: string | null;
+  lastReadChapterOrdinal?: number | null;
+  lastReadChapterPages?: number;
+  scanStatus: ScanStatus;
+  favorited: boolean;
+  readingDirection: ReadingDirection;
+  fitMode: FitMode;
+  readMode?: ReadMode;
+  shelfUpdatedAt?: string | null;
+  shelfUpdateNote?: string | null;
 }
-
-export interface BookshelfMatch {
-  title: string;
-  directory: string;
-  chapterCount: number;
-  imageCount: number;
-}
-
-export type ChapterKind = "regular" | "volume" | "machine_translation" | "other";
 
 export interface LocalChapter {
   id: string;
@@ -44,251 +47,66 @@ export interface LocalChapter {
   specialKind: ChapterKind;
 }
 
-export interface ImportFavoritesResult {
-  imported: number;
-  matched: number;
-  favorites: MangaConFavorite[];
+export interface LoadLibraryResult {
+  databasePath: string;
+  bookshelfRoot: string;
+  comics: LibraryComic[];
 }
 
-export interface SyncBookshelfMatchesResult {
-  imported: number;
+export interface ScanLibraryResult {
   scanned: number;
-  matched: number;
+  added: number;
+  updated: number;
+  unchanged?: number;
   missing: number;
-  orphaned: number;
-  favorites: MangaConFavorite[];
+  failed?: number;
+  failedItems?: Array<{ title: string; error: string }>;
+  databasePath: string;
+  bookshelfRoot: string;
+  comics: LibraryComic[];
 }
 
-export interface MangaConWindow {
-  hwnd: number;
-  title: string;
+export interface ScanProgress {
+  scanned: number;
+  total: number;
+  currentTitle: string;
 }
 
-export interface BadgePoint {
-  x: number;
-  y: number;
+export interface ExtractProgress {
+  current: number;
+  total: number;
 }
 
-export interface WindowPoint {
-  x: number;
-  y: number;
+export interface CacheStats {
+  bytes: number;
+  folders: number;
+  freedBytes: number;
 }
 
-export interface MangaConBadgeScanResult {
-  window: MangaConWindow;
-  width: number;
-  height: number;
-  badges: BadgePoint[];
+export interface ReaderDefaults {
+  readingDirection: ReadingDirection;
+  fitMode: FitMode;
+  readMode: ReadMode;
 }
 
-export interface OpenFavoritesResult {
-  window: MangaConWindow;
-  clicked: WindowPoint;
-  width: number;
-  height: number;
-  badges: BadgePoint[];
+export interface LibraryViewPrefs {
+  filter: "all" | "favorited" | "recent" | "missing";
+  sort: "name" | "recent" | "chapters" | "updated";
+  sortDesc: boolean;
+  query: string;
 }
 
-export interface OpenComicResult {
-  window: MangaConWindow;
-  badge: BadgePoint;
-  clicked: WindowPoint;
-  width: number;
-  height: number;
-  remainingBadges: BadgePoint[];
+export interface LocalInstallerPackage {
+  path: string;
+  fileName: string;
+  version: string;
+  isNewer: boolean;
 }
 
-export interface OpenScrolledComicResult extends OpenComicResult {
-  scrollAttempts: number;
-}
-
-export interface DetailUpdateScanResult {
-  window: MangaConWindow;
-  width: number;
-  height: number;
-  badges: BadgePoint[];
-  scrollAttempts: number;
-}
-
-export interface FavoritesUpdateScanPage {
-  scrollAttempts: number;
-  badges: BadgePoint[];
-}
-
-export interface FavoritesUpdateScanResult {
-  window: MangaConWindow;
-  width: number;
-  height: number;
-  badges: BadgePoint[];
-  pages: FavoritesUpdateScanPage[];
-  scrollAttempts: number;
-}
-
-export interface TriggerDetailDownloadResult {
-  window: MangaConWindow;
-  badge: BadgePoint;
-  clicked: WindowPoint;
-  width: number;
-  height: number;
-  remainingBadges: BadgePoint[];
-  scrollAttempts: number;
-}
-
-export type DetailUpdateBatchStoppedReason =
-  | "limit_reached"
-  | "no_update_badge";
-
-export interface TriggerDetailDownloadBatchResult {
-  requestedLimit: number;
-  processed: number;
-  stoppedReason: DetailUpdateBatchStoppedReason;
-  downloads: TriggerDetailDownloadResult[];
-}
-
-export interface TriggerNextFavoriteUpdateDownloadResult {
-  comic: OpenScrolledComicResult;
-  download: TriggerDetailDownloadResult;
-  downloadBatch: TriggerDetailDownloadBatchResult;
-}
-
-export type FavoriteUpdateSkipReason = "detail_no_update_badge";
-
-export interface SkippedFavoriteUpdateResult {
-  comic: OpenScrolledComicResult;
-  reason: FavoriteUpdateSkipReason;
-}
-
-export type FavoriteUpdateBatchStoppedReason =
-  | "limit_reached"
-  | "no_update_badge"
-  | "detail_no_update_badge";
-
-export interface TriggerFavoriteUpdateBatchResult {
-  requestedLimit: number;
-  processed: number;
-  downloadedChapters: number;
-  stoppedReason: FavoriteUpdateBatchStoppedReason;
-  skipped: SkippedFavoriteUpdateResult[];
-  items: TriggerNextFavoriteUpdateDownloadResult[];
-}
-
-export type FavoriteUpdateRecoveryStoppedReason =
-  | "completed"
-  | "restart_limit_reached";
-
-export type FavoriteUpdateRecoveryEventKind =
-  | "started"
-  | "run_completed"
-  | "comic_downloaded"
-  | "comic_skipped"
-  | "error"
-  | "restarted"
-  | "completed"
-  | "restart_limit_reached";
-
-export interface FavoriteUpdateRecoveryEvent {
-  kind: FavoriteUpdateRecoveryEventKind;
-  message: string;
-  processed: number;
-  downloadedChapters: number;
-  skippedCount: number;
-  restarts: number;
-}
-
-export interface RecoveringFavoriteUpdateResult {
-  requestedLimit: number;
-  maxRestarts: number;
-  restarts: number;
-  processed: number;
-  downloadedChapters: number;
-  skippedCount: number;
-  stoppedReason: FavoriteUpdateRecoveryStoppedReason;
-  lastError: string | null;
-  events: FavoriteUpdateRecoveryEvent[];
-  runs: TriggerFavoriteUpdateBatchResult[];
-}
-
-export interface QueuedMangaConTask {
-  mangaId: number;
-  volumeId: number;
-  manga: string;
-  uri: string;
-  volumeKey: string;
-  title: string;
-  location: string;
-  extra: string;
-  orderIndex: number;
-}
-
-export interface ContinueDownloadConfirmResult {
-  found: boolean;
-  clicked: boolean;
-  dialogTitle: string | null;
-}
-
-export interface QueueMangaConUpdatesResult {
-  backupPath: string;
-  totalUpdates: number;
-  queued: number;
-  skippedExisting: number;
-  clearedUpdateMarkers: number;
-  launched: boolean;
-  launchPid?: number | null;
-  confirm: ContinueDownloadConfirmResult;
-  tasks: QueuedMangaConTask[];
-}
-
-export interface MangaConTaskStatus {
-  totalTasks: number;
-  activeTasks: number;
-  failedTasks: number;
-  finishedTasks: number;
-  totalErrors: number;
-  continueLastSessionTasks?: boolean | null;
-  continueLastSessionTasksValue?: string | null;
-}
-
-export interface RequeuedMangaConRepairTask {
-  taskId: number;
-  uri: string;
-  volumeKey: string;
-  location: string;
-  errors: number;
-  orderIndex: number;
-}
-
-export interface RepairMangaConFailedTasksResult {
-  backupPath: string;
-  totalFailed: number;
-  requeued: number;
-  launched: boolean;
-  launchPid?: number | null;
-  confirm: ContinueDownloadConfirmResult;
-  tasks: RequeuedMangaConRepairTask[];
-}
-
-export interface ResumeMangaConUnfinishedTasksResult {
-  backupPath: string;
-  totalUnfinished: number;
-  resumeConfigured: boolean;
-  launched: boolean;
-  launchPid?: number | null;
-  confirm: ContinueDownloadConfirmResult;
-}
-
-export interface LaunchMangaConResult {
-  pid: number;
-}
-
-export interface EnsureMangaConRunningResult {
-  launched: boolean;
-  launchPid?: number | null;
-  windows: MangaConWindow[];
-}
-
-export interface AutomationRunStatus {
-  state: "waiting_refresh";
-  message: string;
-  detectedBadges: number;
-  stableSamples: number;
+export interface LocalUpdateCheckResult {
+  currentVersion: string;
+  hasUpdate: boolean;
+  latest?: LocalInstallerPackage | null;
+  packages: LocalInstallerPackage[];
+  searchedDirs: string[];
 }

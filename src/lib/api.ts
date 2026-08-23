@@ -1,303 +1,244 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AutomationRunStatus,
-  DetailUpdateScanResult,
-  EnsureMangaConRunningResult,
-  FavoriteUpdateRecoveryEvent,
-  FavoritesUpdateScanResult,
-  ImportFavoritesResult,
-  LaunchMangaConResult,
+  CacheStats,
+  ExtractProgress,
+  FitMode,
+  LibraryComic,
+  LibraryPaths,
+  LoadLibraryResult,
   LocalChapter,
-  MangaConFavorite,
-  MangaConBadgeScanResult,
-  MangaConTaskStatus,
-  MangaConWindow,
-  OpenComicResult,
-  OpenFavoritesResult,
-  QueueMangaConUpdatesResult,
-  RepairMangaConFailedTasksResult,
-  ResumeMangaConUnfinishedTasksResult,
-  RecoveringFavoriteUpdateResult,
-  SyncBookshelfMatchesResult,
-  TriggerDetailDownloadBatchResult,
-  TriggerDetailDownloadResult,
-  TriggerFavoriteUpdateBatchResult,
-  TriggerNextFavoriteUpdateDownloadResult,
+  LocalUpdateCheckResult,
+  ReadMode,
+  ReadingDirection,
+  ScanLibraryResult,
+  ScanProgress,
 } from "./types";
 
-export const FAVORITE_UPDATE_RECOVERY_EVENT = "favorite-update-recovery-event";
-
-export interface ImportFavoritesOptions {
-  favoritesJsonPath?: string;
-  bookshelfRoot?: string;
-  databasePath: string;
+export function loadLibrary(paths: LibraryPaths): Promise<LoadLibraryResult> {
+  return invoke<LoadLibraryResult>("load_library", {
+    bookshelfRoot: paths.bookshelfRoot,
+    databasePath: paths.databasePath,
+  });
 }
 
-export type ImportSummary = ImportFavoritesResult;
-
-export interface SyncBookshelfMatchesOptions {
-  bookshelfRoot: string;
-  databasePath: string;
-  mangaConDatabasePath: string;
+export function scanLibrary(paths: LibraryPaths): Promise<ScanLibraryResult> {
+  return invoke<ScanLibraryResult>("scan_library", {
+    bookshelfRoot: paths.bookshelfRoot,
+    databasePath: paths.databasePath,
+    extraRoots: paths.extraRoots ?? [],
+  });
 }
 
-export interface LoadImportedComicsOptions {
-  databasePath: string;
+export function cancelLibraryScan(): Promise<void> {
+  return invoke<void>("cancel_library_scan");
 }
 
-export interface LaunchMangaConOptions {
-  executablePath: string;
-}
-
-export interface ScanLocalChaptersOptions {
+export function scanLocalChapters(options: {
   comicId: string;
   comicDirectory: string;
-}
-
-export interface ListChapterPagesOptions {
-  chapterPath: string;
-}
-
-export interface TriggerFavoriteUpdateBatchOptions {
-  maxUpdates?: number;
-}
-
-export interface TriggerAllFavoriteUpdatesOptions {
-  maxComics?: number;
-}
-
-export interface TriggerAllFavoriteUpdatesWithRecoveryOptions {
-  executablePath: string;
-  maxComics?: number;
-  maxRestarts?: number;
-}
-
-export interface QueueMangaConUpdatesOptions {
-  mangaConDatabasePath: string;
-  executablePath: string;
-  companionDatabasePath?: string;
-  maxUpdates?: number;
-}
-
-export interface GetMangaConTaskStatusOptions {
-  mangaConDatabasePath: string;
-}
-
-export interface RepairMangaConFailedTasksOptions {
-  mangaConDatabasePath: string;
-  executablePath: string;
-  maxTasks?: number;
-}
-
-export interface ResumeMangaConUnfinishedTasksOptions {
-  mangaConDatabasePath: string;
-  executablePath: string;
-}
-
-export interface TriggerDetailUpdateBatchOptions {
-  maxChapters?: number;
-}
-
-export function importFavorites(
-  options: ImportFavoritesOptions,
-): Promise<ImportSummary> {
-  return invoke<ImportSummary>("import_favorites", {
-    favoritesJsonPath: options.favoritesJsonPath,
-    bookshelfRoot: options.bookshelfRoot,
-    databasePath: options.databasePath,
-  });
-}
-
-export function syncBookshelfMatches(
-  options: SyncBookshelfMatchesOptions,
-): Promise<SyncBookshelfMatchesResult> {
-  return invoke<SyncBookshelfMatchesResult>("sync_bookshelf_matches", {
-    bookshelfRoot: options.bookshelfRoot,
-    databasePath: options.databasePath,
-    mangaConDatabasePath: options.mangaConDatabasePath,
-  });
-}
-
-export function loadImportedComics(
-  options: LoadImportedComicsOptions,
-): Promise<MangaConFavorite[]> {
-  return invoke<MangaConFavorite[]>("load_imported_comics", {
-    databasePath: options.databasePath,
-  });
-}
-
-export function scanLocalChapters(
-  options: ScanLocalChaptersOptions,
-): Promise<LocalChapter[]> {
+  databasePath?: string;
+  force?: boolean;
+}): Promise<LocalChapter[]> {
   return invoke<LocalChapter[]>("scan_local_chapters", {
     comicId: options.comicId,
     comicDirectory: options.comicDirectory,
+    databasePath: options.databasePath,
+    force: options.force ?? false,
   });
 }
 
-export function listChapterPages(
-  options: ListChapterPagesOptions,
-): Promise<string[]> {
+export function listChapterPages(options: {
+  chapterPath: string;
+  bookshelfRoot?: string;
+}): Promise<string[]> {
   return invoke<string[]>("list_chapter_pages", {
     chapterPath: options.chapterPath,
+    bookshelfRoot: options.bookshelfRoot,
   });
 }
 
-export function findMangaConWindows(): Promise<MangaConWindow[]> {
-  return invoke<MangaConWindow[]>("find_mangacon_windows");
+export function peekChapterFirstPage(chapterPath: string): Promise<string | null> {
+  return invoke<string | null>("peek_chapter_first_page", { chapterPath });
 }
 
-export function launchMangaCon(
-  options: LaunchMangaConOptions,
-): Promise<LaunchMangaConResult> {
-  return invoke<LaunchMangaConResult>("launch_mangacon", {
-    executablePath: options.executablePath,
+export function saveReadProgress(options: {
+  databasePath: string;
+  comicId: string;
+  chapterId: string;
+  page: number;
+}): Promise<LibraryComic | null> {
+  return invoke<LibraryComic | null>("save_read_progress", {
+    databasePath: options.databasePath,
+    comicId: options.comicId,
+    chapterId: options.chapterId,
+    page: options.page,
   });
 }
 
-export function ensureMangaConRunning(
-  options: LaunchMangaConOptions,
-): Promise<EnsureMangaConRunningResult> {
-  return invoke<EnsureMangaConRunningResult>("ensure_mangacon_running", {
-    executablePath: options.executablePath,
+export function updateComicMetadata(options: {
+  databasePath: string;
+  comicId: string;
+  name?: string;
+  author?: string;
+  tags?: string[];
+}): Promise<LibraryComic | null> {
+  return invoke<LibraryComic | null>("update_comic_metadata", {
+    databasePath: options.databasePath,
+    comicId: options.comicId,
+    name: options.name,
+    author: options.author,
+    tags: options.tags,
   });
 }
 
-export function restartMangaCon(
-  options: LaunchMangaConOptions,
-): Promise<LaunchMangaConResult> {
-  return invoke<LaunchMangaConResult>("restart_mangacon", {
-    executablePath: options.executablePath,
+export function setComicFavorite(options: {
+  databasePath: string;
+  comicId: string;
+  favorited: boolean;
+}): Promise<LibraryComic | null> {
+  return invoke<LibraryComic | null>("set_comic_favorite", {
+    databasePath: options.databasePath,
+    comicId: options.comicId,
+    favorited: options.favorited,
   });
 }
 
-export function getAutomationStatus(): Promise<AutomationRunStatus> {
-  return invoke<AutomationRunStatus>("get_automation_status");
-}
-
-export function scanMangaConBadges(): Promise<MangaConBadgeScanResult> {
-  return invoke<MangaConBadgeScanResult>("scan_mangacon_badges");
-}
-
-export function openMangaConFavorites(): Promise<OpenFavoritesResult> {
-  return invoke<OpenFavoritesResult>("open_mangacon_favorites");
-}
-
-export function openFirstUpdatedComic(): Promise<OpenComicResult> {
-  return invoke<OpenComicResult>("open_first_updated_comic");
-}
-
-export function scanDetailUpdates(): Promise<DetailUpdateScanResult> {
-  return invoke<DetailUpdateScanResult>("scan_detail_updates");
-}
-
-export function scanFavoritesUpdates(): Promise<FavoritesUpdateScanResult> {
-  return invoke<FavoritesUpdateScanResult>("scan_favorites_updates");
-}
-
-export function triggerFirstDetailUpdateDownload(): Promise<TriggerDetailDownloadResult> {
-  return invoke<TriggerDetailDownloadResult>("trigger_first_detail_update_download");
-}
-
-export function triggerDetailUpdateDownloadBatch(
-  options: TriggerDetailUpdateBatchOptions = {},
-): Promise<TriggerDetailDownloadBatchResult> {
-  return invoke<TriggerDetailDownloadBatchResult>(
-    "trigger_detail_update_download_batch",
-    {
-      maxChapters: options.maxChapters,
-    },
-  );
-}
-
-export function triggerNextFavoriteUpdateDownload(): Promise<TriggerNextFavoriteUpdateDownloadResult> {
-  return invoke<TriggerNextFavoriteUpdateDownloadResult>(
-    "trigger_next_favorite_update_download",
-  );
-}
-
-export function triggerFavoriteUpdateBatch(
-  options: TriggerFavoriteUpdateBatchOptions = {},
-): Promise<TriggerFavoriteUpdateBatchResult> {
-  return invoke<TriggerFavoriteUpdateBatchResult>(
-    "trigger_favorite_update_batch",
-    {
-      maxUpdates: options.maxUpdates,
-    },
-  );
-}
-
-export function triggerAllFavoriteUpdates(
-  options: TriggerAllFavoriteUpdatesOptions = {},
-): Promise<TriggerFavoriteUpdateBatchResult> {
-  return invoke<TriggerFavoriteUpdateBatchResult>("trigger_all_favorite_updates", {
-    maxComics: options.maxComics,
+export function setReaderPrefs(options: {
+  databasePath: string;
+  comicId: string;
+  readingDirection: ReadingDirection;
+  fitMode: FitMode;
+  readMode?: ReadMode;
+}): Promise<LibraryComic | null> {
+  return invoke<LibraryComic | null>("set_reader_prefs", {
+    databasePath: options.databasePath,
+    comicId: options.comicId,
+    readingDirection: options.readingDirection,
+    fitMode: options.fitMode,
+    readMode: options.readMode ?? "page",
   });
 }
 
-export function triggerAllFavoriteUpdatesWithRecovery(
-  options: TriggerAllFavoriteUpdatesWithRecoveryOptions,
-): Promise<RecoveringFavoriteUpdateResult> {
-  return invoke<RecoveringFavoriteUpdateResult>(
-    "trigger_all_favorite_updates_with_recovery",
-    {
-      executablePath: options.executablePath,
-      maxComics: options.maxComics,
-      maxRestarts: options.maxRestarts,
-    },
-  );
-}
-
-export function queueMangaConUpdates(
-  options: QueueMangaConUpdatesOptions,
-): Promise<QueueMangaConUpdatesResult> {
-  return invoke<QueueMangaConUpdatesResult>("queue_mangacon_updates", {
-    mangaConDatabasePath: options.mangaConDatabasePath,
-    executablePath: options.executablePath,
-    companionDatabasePath: options.companionDatabasePath,
-    maxUpdates: options.maxUpdates,
+export function clearReadProgress(options: {
+  databasePath: string;
+  comicId: string;
+}): Promise<LibraryComic | null> {
+  return invoke<LibraryComic | null>("clear_read_progress", {
+    databasePath: options.databasePath,
+    comicId: options.comicId,
   });
 }
 
-export function getMangaConTaskStatus(
-  options: GetMangaConTaskStatusOptions,
-): Promise<MangaConTaskStatus> {
-  return invoke<MangaConTaskStatus>("get_mangacon_task_status", {
-    mangaConDatabasePath: options.mangaConDatabasePath,
+export function pathIsDirectory(path: string): Promise<boolean> {
+  return invoke<boolean>("path_is_directory", { path });
+}
+
+export function deleteLibraryComic(options: {
+  databasePath: string;
+  comicId: string;
+}): Promise<void> {
+  return invoke<void>("delete_library_comic", {
+    databasePath: options.databasePath,
+    comicId: options.comicId,
   });
 }
 
-export function repairMangaConFailedTasks(
-  options: RepairMangaConFailedTasksOptions,
-): Promise<RepairMangaConFailedTasksResult> {
-  return invoke<RepairMangaConFailedTasksResult>(
-    "repair_mangacon_failed_tasks",
-    {
-      mangaConDatabasePath: options.mangaConDatabasePath,
-      executablePath: options.executablePath,
-      maxTasks: options.maxTasks,
-    },
-  );
+export function listCoverCandidates(comicDirectory: string): Promise<string[]> {
+  return invoke<string[]>("list_cover_candidates", { comicDirectory });
 }
 
-export function resumeMangaConUnfinishedTasks(
-  options: ResumeMangaConUnfinishedTasksOptions,
-): Promise<ResumeMangaConUnfinishedTasksResult> {
-  return invoke<ResumeMangaConUnfinishedTasksResult>(
-    "resume_mangacon_unfinished_tasks",
-    {
-      mangaConDatabasePath: options.mangaConDatabasePath,
-      executablePath: options.executablePath,
-    },
-  );
+export function setComicCover(options: {
+  bookshelfRoot: string;
+  databasePath: string;
+  comicId: string;
+  sourcePath: string;
+}): Promise<LibraryComic | null> {
+  return invoke<LibraryComic | null>("set_comic_cover", {
+    bookshelfRoot: options.bookshelfRoot,
+    databasePath: options.databasePath,
+    comicId: options.comicId,
+    sourcePath: options.sourcePath,
+  });
 }
 
-export function listenFavoriteUpdateRecoveryEvents(
-  handler: (event: FavoriteUpdateRecoveryEvent) => void,
-): Promise<UnlistenFn> {
-  return listen<FavoriteUpdateRecoveryEvent>(
-    FAVORITE_UPDATE_RECOVERY_EVENT,
-    (event) => handler(event.payload),
-  );
+export function libraryCacheStats(options: {
+  bookshelfRoot: string;
+  extraRoots?: string[];
+}): Promise<CacheStats> {
+  return invoke<CacheStats>("library_cache_stats", {
+    bookshelfRoot: options.bookshelfRoot,
+    extraRoots: options.extraRoots ?? [],
+  });
+}
+
+export function clearLibraryCache(options: {
+  bookshelfRoot: string;
+  extraRoots?: string[];
+}): Promise<CacheStats> {
+  return invoke<CacheStats>("clear_library_cache", {
+    bookshelfRoot: options.bookshelfRoot,
+    extraRoots: options.extraRoots ?? [],
+  });
+}
+
+export function getAppVersion(): Promise<string> {
+  return invoke<string>("get_app_version");
+}
+
+export function checkLocalInstallerUpdates(_options?: {
+  searchPath?: string;
+}): Promise<LocalUpdateCheckResult> {
+  return invoke<LocalUpdateCheckResult>("check_local_installer_updates");
+}
+
+export function openLocalInstaller(path: string): Promise<void> {
+  return invoke<void>("open_local_installer", { path });
+}
+
+export function installAppUpdate(options: {
+  downloadUrl: string;
+  fileName: string;
+}): Promise<void> {
+  return invoke<void>("install_app_update", {
+    downloadUrl: options.downloadUrl,
+    fileName: options.fileName,
+  });
+}
+
+export function pickDirectory(): Promise<string | null> {
+  return invoke<string | null>("pick_directory");
+}
+
+export function openPath(path: string): Promise<void> {
+  return invoke<void>("open_path", { path });
+}
+
+export function allowAssetRoot(path: string): Promise<void> {
+  return invoke<void>("allow_asset_root", { path });
+}
+
+export async function listenScanProgress(
+  onProgress: (progress: ScanProgress) => void,
+): Promise<() => void> {
+  return listenEvent("library-scan-progress", onProgress);
+}
+
+export async function listenExtractProgress(
+  onProgress: (progress: ExtractProgress) => void,
+): Promise<() => void> {
+  return listenEvent("library-extract-progress", onProgress);
+}
+
+async function listenEvent<T>(
+  event: string,
+  onProgress: (payload: T) => void,
+): Promise<() => void> {
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen<T>(event, (message) => {
+      onProgress(message.payload);
+    });
+  } catch {
+    return () => undefined;
+  }
 }

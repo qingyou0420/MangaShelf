@@ -1,26 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { approvedDefaultPaths, sampleFavorite } from "../test/fixtures";
+import {
+  cacheRootForPath,
+  databasePathFor,
+  defaultLibraryPaths,
+  sampleComic,
+} from "./defaults";
 
-describe("shared MangaCon companion types", () => {
-  it("keeps approved default Windows paths available to tests", () => {
-    expect(approvedDefaultPaths).toEqual({
-      mangaConExecutable: "E:\\漫画控\\MangaCon.exe",
-      mangaConFavoritesJson: "E:\\漫画控\\20260528184624.mc3db.json",
-      mangaConDatabase:
-        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat",
+describe("local library types", () => {
+  it("keeps default local bookshelf paths", () => {
+    expect(defaultLibraryPaths).toEqual({
       bookshelfRoot: "E:\\书架",
-      databasePath: "E:\\书架\\mangacon-companion.sqlite",
+      databasePath: "E:\\书架\\manga-library.sqlite",
+      extraRoots: [],
     });
   });
 
-  it("models imported favorites with stable ids, titles, and tags", () => {
-    expect(sampleFavorite).toMatchObject({
-      id: "cp:ruoshijiechuyuheiye",
+  it("models a local comic without platform source fields", () => {
+    expect(sampleComic).toMatchObject({
       name: "若世界處於黑夜",
-      location: "若世界處於黑夜",
-      sourceUri: "cp:ruoshijiechuyuheiye",
-      sourceScheme: "cp",
-      tags: ["むちまろ"],
+      scanStatus: "matched",
+      favorited: false,
+      readingDirection: "ltr",
     });
+    expect(sampleComic).not.toHaveProperty("sourceUri");
+    expect(sampleComic).not.toHaveProperty("hasUpdate");
+  });
+
+  it("derives the index path from a bookshelf folder", () => {
+    expect(databasePathFor("D:\\Comics\\")).toBe("D:\\Comics\\manga-library.sqlite");
+  });
+
+  it("picks extra bookshelf root for cache paths", () => {
+    expect(
+      cacheRootForPath("D:\\Extra\\书\\第01话\\001.jpg", {
+        bookshelfRoot: "E:\\书架",
+        databasePath: "E:\\书架\\manga-library.sqlite",
+        extraRoots: ["D:\\Extra"],
+      }),
+    ).toBe("D:\\Extra");
   });
 });

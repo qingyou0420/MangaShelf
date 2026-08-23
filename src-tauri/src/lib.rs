@@ -1,329 +1,87 @@
-pub mod automation;
 pub mod bookshelf;
 pub mod config;
+pub mod cover;
 pub mod db;
 pub mod domain;
-pub mod favorites;
-pub mod mangacon;
+pub mod library;
+pub mod update;
 
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{Emitter, Manager, State};
 
 use crate::{
-    automation::AutomationRunStatus,
-    bookshelf::{
-        find_first_image_page, list_chapter_pages as list_chapter_pages_inner,
-        manga_directory_fingerprint, scan_comic_chapters,
+    bookshelf::{find_first_image_page, list_chapter_pages_with_progress},
+    domain::{
+        CacheStats, Chapter, Comic, FitMode, LoadLibraryResult, ReadMode, ReadingDirection,
+        ScanLibraryResult,
     },
-    config::AppConfig,
-    db::CompanionDatabase,
-    domain::{Chapter, Comic, ImportSummary},
-    favorites::import_mangacon_favorites,
-    mangacon::{
-        capture::{scan_mangacon_badges as scan_mangacon_badges_inner, MangaConBadgeScanResult},
-        confirm::{confirm_continue_download_dialog, ContinueDownloadConfirmResult},
-        database::{
-            prepare_unfinished_tasks_for_resume, queue_updates_including_local_gaps,
-            read_manga_cache_records, read_task_status, requeue_failed_tasks_for_repair,
-            MangaConTaskStatus, QueueMangaConUpdatesResult, QueuedMangaConTask,
-            RepairMangaConFailedTasksResult, RequeuedMangaConRepairTask,
-            ResumeMangaConUnfinishedTasksResult,
-        },
-        navigation::{
-            favorite_update_all_limit, open_favorites_from_home as open_mangacon_favorites_inner,
-            open_first_badged_comic_from_favorites as open_first_updated_comic_inner,
-            scan_detail_updates_with_scroll as scan_detail_updates_inner,
-            scan_favorites_updates_with_scroll as scan_favorites_updates_inner,
-            trigger_all_favorite_updates as trigger_all_favorite_updates_inner,
-            trigger_all_favorite_updates_with_progress,
-            trigger_detail_update_download_batch as trigger_detail_update_download_batch_inner,
-            trigger_favorite_update_batch as trigger_favorite_update_batch_inner,
-            trigger_first_detail_update_download as trigger_first_detail_update_download_inner,
-            trigger_next_favorite_update_download as trigger_next_favorite_update_download_inner,
-            DetailUpdateScanResult, FavoriteUpdateProgress, FavoriteUpdateProgressKind,
-            FavoritesUpdateScanResult, OpenComicResult, OpenFavoritesResult,
-            TriggerDetailDownloadBatchResult, TriggerDetailDownloadResult,
-            TriggerFavoriteUpdateBatchResult, TriggerNextFavoriteUpdateDownloadResult,
-        },
-        process::{
-            launch_mangacon as launch_mangacon_process,
-            restart_mangacon as restart_mangacon_process, LaunchResult,
-        },
-        window::MangaConWindow,
+    cover::cover_or_source,
+    library::{
+        cache_stats as cache_stats_inner, clear_extract_cache as clear_extract_cache_inner,
+        cover_candidates as cover_candidates_inner, load_library as load_library_inner,
+        load_or_scan_chapters, scan_library_with_progress,
+    },
+    update::{
+        app_version, check_github_updates, download_and_install_update,
+        open_path as open_path_inner, LocalUpdateCheckResult,
     },
 };
 use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-    thread,
-    time::Duration,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
-const FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS: u32 = 2;
-const FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS: u32 = 5;
-const MANGACON_RECOVERY_REFRESH_WAIT_MS: u64 = 12_000;
-const MANGACON_CONTINUE_CONFIRM_ATTEMPTS: usize = 40;
-const MANGACON_EXISTING_CONTINUE_CONFIRM_ATTEMPTS: usize = 4;
-const MANGACON_CONTINUE_CONFIRM_POLL_MS: u64 = 250;
-const FAVORITE_UPDATE_RECOVERY_EVENT: &str = "favorite-update-recovery-event";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FavoriteUpdateRecoveryStoppedReason {
-    Completed,
-    RestartLimitReached,
+struct ScanControl {
+    requested: Arc<AtomicBool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FavoriteUpdateRecoveryEventKind {
-    Started,
-    RunCompleted,
-    ComicDownloaded,
-    ComicSkipped,
-    Error,
-    Restarted,
-    Completed,
-    RestartLimitReached,
+struct LibraryDbState {
+    inner: std::sync::Mutex<Option<(String, crate::db::LibraryDatabase)>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FavoriteUpdateRecoveryEvent {
-    pub kind: FavoriteUpdateRecoveryEventKind,
-    pub message: String,
-    pub processed: u32,
-    pub downloaded_chapters: u32,
-    pub skipped_count: u32,
-    pub restarts: u32,
-}
-
-impl FavoriteUpdateRecoveryEvent {
-    fn started(requested_limit: u32) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::Started,
-            message: format!("开始自动恢复长跑，目标 {requested_limit} 本"),
-            processed: 0,
-            downloaded_chapters: 0,
-            skipped_count: 0,
-            restarts: 0,
+impl LibraryDbState {
+    fn with<T>(
+        &self,
+        path: &str,
+        callback: impl FnOnce(&crate::db::LibraryDatabase) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        let reopen = match guard.as_ref() {
+            Some((open_path, _)) => open_path != path,
+            None => true,
+        };
+        if reopen {
+            let db = crate::db::LibraryDatabase::open(path)?;
+            db.migrate()?;
+            *guard = Some((path.to_string(), db));
         }
-    }
-
-    fn run_completed(
-        run_number: u32,
-        run: &TriggerFavoriteUpdateBatchResult,
-        restarts: u32,
-    ) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::RunCompleted,
-            message: format!("第 {run_number} 轮完成"),
-            processed: run.processed,
-            downloaded_chapters: run.downloaded_chapters,
-            skipped_count: run.skipped.len() as u32,
-            restarts,
-        }
-    }
-
-    fn comic_downloaded(
-        processed: u32,
-        downloaded_chapters: u32,
-        skipped_count: u32,
-        downloaded_this_comic: u32,
-    ) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::ComicDownloaded,
-            message: format!("第 {processed} 本已交给漫画控，下载 {downloaded_this_comic} 话"),
-            processed,
-            downloaded_chapters,
-            skipped_count,
-            restarts: 0,
-        }
-    }
-
-    fn comic_skipped(processed: u32, downloaded_chapters: u32, skipped_count: u32) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::ComicSkipped,
-            message: "跳过 1 本：详情页没有更新红点".to_string(),
-            processed,
-            downloaded_chapters,
-            skipped_count,
-            restarts: 0,
-        }
-    }
-
-    fn error(
-        message: String,
-        processed: u32,
-        downloaded_chapters: u32,
-        skipped_count: u32,
-        restarts: u32,
-    ) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::Error,
-            message,
-            processed,
-            downloaded_chapters,
-            skipped_count,
-            restarts,
-        }
-    }
-
-    fn restarted(restarts: u32, max_restarts: u32) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::Restarted,
-            message: format!("漫画控已重启，等待红点刷新（{restarts}/{max_restarts}）"),
-            processed: 0,
-            downloaded_chapters: 0,
-            skipped_count: 0,
-            restarts,
-        }
-    }
-
-    fn completed(
-        processed: u32,
-        downloaded_chapters: u32,
-        skipped_count: u32,
-        restarts: u32,
-    ) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::Completed,
-            message: "自动恢复长跑完成".to_string(),
-            processed,
-            downloaded_chapters,
-            skipped_count,
-            restarts,
-        }
-    }
-
-    fn restart_limit_reached(
-        processed: u32,
-        downloaded_chapters: u32,
-        skipped_count: u32,
-        restarts: u32,
-    ) -> Self {
-        Self {
-            kind: FavoriteUpdateRecoveryEventKind::RestartLimitReached,
-            message: "已达到自动重启上限".to_string(),
-            processed,
-            downloaded_chapters,
-            skipped_count,
-            restarts,
-        }
-    }
-
-    fn with_totals(mut self, processed: u32, downloaded_chapters: u32, skipped_count: u32) -> Self {
-        self.processed = processed;
-        self.downloaded_chapters = downloaded_chapters;
-        self.skipped_count = skipped_count;
-        self
-    }
-
-    fn with_restarts(mut self, restarts: u32) -> Self {
-        self.restarts = restarts;
-        self
+        callback(&guard.as_ref().expect("db").1)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecoveringFavoriteUpdateResult {
-    pub requested_limit: u32,
-    pub max_restarts: u32,
-    pub restarts: u32,
-    pub processed: u32,
-    pub downloaded_chapters: u32,
-    pub skipped_count: u32,
-    pub stopped_reason: FavoriteUpdateRecoveryStoppedReason,
-    pub last_error: Option<String>,
-    pub events: Vec<FavoriteUpdateRecoveryEvent>,
-    pub runs: Vec<TriggerFavoriteUpdateBatchResult>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueueMangaConUpdatesCommandResult {
-    pub backup_path: String,
-    pub total_updates: usize,
-    pub queued: usize,
-    pub skipped_existing: usize,
-    pub cleared_update_markers: usize,
-    pub launched: bool,
-    pub launch_pid: Option<u32>,
-    pub confirm: ContinueDownloadConfirmResult,
-    pub tasks: Vec<QueuedMangaConTask>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepairMangaConFailedTasksCommandResult {
-    pub backup_path: String,
-    pub total_failed: usize,
-    pub requeued: usize,
-    pub launched: bool,
-    pub launch_pid: Option<u32>,
-    pub confirm: ContinueDownloadConfirmResult,
-    pub tasks: Vec<RequeuedMangaConRepairTask>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResumeMangaConUnfinishedTasksCommandResult {
-    pub backup_path: String,
-    pub total_unfinished: usize,
-    pub resume_configured: bool,
-    pub launched: bool,
-    pub launch_pid: Option<u32>,
-    pub confirm: ContinueDownloadConfirmResult,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnsureMangaConRunningResult {
-    pub launched: bool,
-    pub launch_pid: Option<u32>,
-    pub windows: Vec<MangaConWindow>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncBookshelfMatchesResult {
-    pub imported: usize,
-    pub scanned: usize,
-    pub matched: usize,
-    pub missing: usize,
-    pub orphaned: usize,
-    pub favorites: Vec<Comic>,
-}
-
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn allow_bookshelf_assets(app: &tauri::AppHandle, root: &str) {
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let path = PathBuf::from(trimmed);
+    let _ = app.asset_protocol_scope().allow_directory(&path, true);
 }
 
 #[tauri::command]
-async fn import_favorites(
-    favorites_json_path: Option<String>,
-    bookshelf_root: Option<String>,
-    database_path: String,
-) -> Result<ImportSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        import_favorites_inner(favorites_json_path, bookshelf_root, database_path)
-    })
-    .await
-    .map_err(|err| err.to_string())?
-    .map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-async fn sync_bookshelf_matches(
+async fn load_library(
+    app: tauri::AppHandle,
     bookshelf_root: String,
-    database_path: String,
-    manga_con_database_path: String,
-) -> Result<SyncBookshelfMatchesResult, String> {
+    database_path: Option<String>,
+) -> Result<LoadLibraryResult, String> {
+    allow_bookshelf_assets(&app, &bookshelf_root);
     tauri::async_runtime::spawn_blocking(move || {
-        sync_bookshelf_matches_inner(bookshelf_root, database_path, manga_con_database_path)
+        load_library_inner(&bookshelf_root, database_path.as_deref())
     })
     .await
     .map_err(|err| err.to_string())?
@@ -331,798 +89,393 @@ async fn sync_bookshelf_matches(
 }
 
 #[tauri::command]
-async fn load_imported_comics(database_path: String) -> Result<Vec<Comic>, String> {
-    tauri::async_runtime::spawn_blocking(move || load_imported_comics_inner(database_path))
+async fn scan_library(
+    app: tauri::AppHandle,
+    control: State<'_, ScanControl>,
+    bookshelf_root: String,
+    database_path: Option<String>,
+    extra_roots: Option<Vec<String>>,
+) -> Result<ScanLibraryResult, String> {
+    allow_bookshelf_assets(&app, &bookshelf_root);
+    for extra in extra_roots.iter().flatten() {
+        allow_bookshelf_assets(&app, extra);
+    }
+    control.requested.store(false, Ordering::SeqCst);
+    let flag = control.requested.clone();
+    let emit_app = app.clone();
+    let extras = extra_roots.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_library_with_progress(
+            &bookshelf_root,
+            database_path.as_deref(),
+            &extras,
+            |progress| {
+                let _ = emit_app.emit("library-scan-progress", progress);
+                !flag.load(Ordering::SeqCst)
+            },
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn cancel_library_scan(control: State<'_, ScanControl>) {
+    control.requested.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn allow_asset_root(app: tauri::AppHandle, path: String) {
+    allow_bookshelf_assets(&app, &path);
+}
+
+#[tauri::command]
+async fn pick_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let picked = rfd::FileDialog::new()
+            .set_title("选择书架文件夹")
+            .pick_folder()
+            .map(|path| path.to_string_lossy().into_owned());
+        let _ = tx.send(picked);
+    })
+    .map_err(|err| err.to_string())?;
+    rx.recv().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    open_path_inner(path)
+}
+
+#[tauri::command]
+fn path_is_directory(path: String) -> bool {
+    PathBuf::from(path).is_dir()
+}
+
+#[tauri::command]
+async fn scan_local_chapters(
+    comic_id: String,
+    comic_directory: String,
+    database_path: Option<String>,
+    force: Option<bool>,
+) -> Result<Vec<Chapter>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        load_or_scan_chapters(
+            &comic_id,
+            comic_directory,
+            database_path.as_deref(),
+            force.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_chapter_pages(
+    app: tauri::AppHandle,
+    chapter_path: String,
+    bookshelf_root: Option<String>,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        list_chapter_pages_with_progress(
+            chapter_path,
+            bookshelf_root.as_deref(),
+            |progress| {
+                let _ = app.emit("library-extract-progress", progress);
+            },
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn peek_chapter_first_page(chapter_path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        find_first_image_page(PathBuf::from(chapter_path))
+            .map(|page| page.map(|path| path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn save_read_progress(
+    app: tauri::AppHandle,
+    database_path: String,
+    comic_id: String,
+    chapter_id: String,
+    page: u32,
+) -> Result<Option<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| {
+                db.save_read_progress(&comic_id, &chapter_id, page)
+            })
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn update_comic_metadata(
+    app: tauri::AppHandle,
+    database_path: String,
+    comic_id: String,
+    name: Option<String>,
+    author: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<Option<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| {
+                db.update_comic_metadata(
+                    &comic_id,
+                    name.as_deref(),
+                    author.as_deref(),
+                    tags.as_deref(),
+                )
+            })
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn set_comic_favorite(
+    app: tauri::AppHandle,
+    database_path: String,
+    comic_id: String,
+    favorited: bool,
+) -> Result<Option<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| db.set_comic_favorite(&comic_id, favorited))
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn set_reader_prefs(
+    app: tauri::AppHandle,
+    database_path: String,
+    comic_id: String,
+    reading_direction: ReadingDirection,
+    fit_mode: FitMode,
+    read_mode: Option<ReadMode>,
+) -> Result<Option<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| {
+                db.set_reader_prefs(
+                    &comic_id,
+                    reading_direction,
+                    fit_mode,
+                    read_mode.unwrap_or(ReadMode::Page),
+                )
+            })
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn clear_read_progress(
+    app: tauri::AppHandle,
+    database_path: String,
+    comic_id: String,
+) -> Result<Option<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| db.clear_read_progress(&comic_id))
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn delete_library_comic(
+    app: tauri::AppHandle,
+    database_path: String,
+    comic_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| db.delete_comic(&comic_id))
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn list_cover_candidates(comic_directory: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || cover_candidates_inner(comic_directory))
         .await
         .map_err(|err| err.to_string())?
         .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
-fn scan_local_chapters(comic_id: String, comic_directory: String) -> Result<Vec<Chapter>, String> {
-    scan_comic_chapters(&comic_id, comic_directory).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn list_chapter_pages(chapter_path: String) -> Result<Vec<String>, String> {
-    list_chapter_pages_inner(chapter_path).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn find_mangacon_windows() -> Vec<MangaConWindow> {
-    mangacon::window::find_mangacon_windows()
-}
-
-#[tauri::command]
-fn launch_mangacon(executable_path: String) -> Result<LaunchResult, String> {
-    launch_mangacon_process(executable_path).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn ensure_mangacon_running(executable_path: String) -> Result<EnsureMangaConRunningResult, String> {
-    ensure_mangacon_running_inner(executable_path)
-}
-
-#[tauri::command]
-fn restart_mangacon(executable_path: String) -> Result<LaunchResult, String> {
-    restart_mangacon_process(executable_path).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn get_automation_status() -> AutomationRunStatus {
-    AutomationRunStatus::waiting_refresh(0, 0)
-}
-
-#[tauri::command]
-fn scan_mangacon_badges() -> Result<MangaConBadgeScanResult, String> {
-    scan_mangacon_badges_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn get_mangacon_task_status(manga_con_database_path: String) -> Result<MangaConTaskStatus, String> {
-    read_task_status(manga_con_database_path).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn repair_mangacon_failed_tasks(
-    manga_con_database_path: String,
-    executable_path: String,
-    max_tasks: Option<u32>,
-) -> Result<RepairMangaConFailedTasksCommandResult, String> {
-    let repair = requeue_failed_tasks_for_repair(manga_con_database_path, max_tasks)
-        .map_err(|err| err.to_string())?;
-    let (launched, launch_pid, confirm) = if repair.requeued > 0 {
-        let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        let confirm =
-            confirm_continue_download_dialog_after_restart().map_err(|err| err.to_string())?;
-        (true, Some(launch.pid), confirm)
-    } else {
-        (
-            false,
-            None,
-            ContinueDownloadConfirmResult {
-                found: false,
-                clicked: false,
-                dialog_title: None,
-            },
-        )
-    };
-
-    let RepairMangaConFailedTasksResult {
-        backup_path,
-        total_failed,
-        requeued,
-        tasks,
-    } = repair;
-    Ok(RepairMangaConFailedTasksCommandResult {
-        backup_path,
-        total_failed,
-        requeued,
-        launched,
-        launch_pid,
-        confirm,
-        tasks,
-    })
-}
-
-#[tauri::command]
-fn resume_mangacon_unfinished_tasks(
-    manga_con_database_path: String,
-    executable_path: String,
-) -> Result<ResumeMangaConUnfinishedTasksCommandResult, String> {
-    let resume = prepare_unfinished_tasks_for_resume(manga_con_database_path)
-        .map_err(|err| err.to_string())?;
-    let (launched, launch_pid, confirm) = if resume.resume_configured {
-        let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        let confirm =
-            confirm_continue_download_dialog_after_restart().map_err(|err| err.to_string())?;
-        (true, Some(launch.pid), confirm)
-    } else {
-        (
-            false,
-            None,
-            ContinueDownloadConfirmResult {
-                found: false,
-                clicked: false,
-                dialog_title: None,
-            },
-        )
-    };
-
-    let ResumeMangaConUnfinishedTasksResult {
-        backup_path,
-        total_unfinished,
-        resume_configured,
-    } = resume;
-    Ok(ResumeMangaConUnfinishedTasksCommandResult {
-        backup_path,
-        total_unfinished,
-        resume_configured,
-        launched,
-        launch_pid,
-        confirm,
-    })
-}
-
-#[tauri::command]
-fn open_mangacon_favorites() -> Result<OpenFavoritesResult, String> {
-    open_mangacon_favorites_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn open_first_updated_comic() -> Result<OpenComicResult, String> {
-    open_first_updated_comic_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn scan_detail_updates() -> Result<DetailUpdateScanResult, String> {
-    scan_detail_updates_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn scan_favorites_updates() -> Result<FavoritesUpdateScanResult, String> {
-    scan_favorites_updates_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn trigger_first_detail_update_download() -> Result<TriggerDetailDownloadResult, String> {
-    trigger_first_detail_update_download_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn trigger_detail_update_download_batch(
-    max_chapters: Option<u32>,
-) -> Result<TriggerDetailDownloadBatchResult, String> {
-    trigger_detail_update_download_batch_inner(max_chapters).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn trigger_next_favorite_update_download() -> Result<TriggerNextFavoriteUpdateDownloadResult, String>
-{
-    trigger_next_favorite_update_download_inner().map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn trigger_favorite_update_batch(
-    max_updates: Option<u32>,
-) -> Result<TriggerFavoriteUpdateBatchResult, String> {
-    trigger_favorite_update_batch_inner(max_updates).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn trigger_all_favorite_updates(
-    max_comics: Option<u32>,
-) -> Result<TriggerFavoriteUpdateBatchResult, String> {
-    trigger_all_favorite_updates_inner(max_comics).map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-fn trigger_all_favorite_updates_with_recovery(
-    app: AppHandle,
-    executable_path: String,
-    max_comics: Option<u32>,
-    max_restarts: Option<u32>,
-) -> Result<RecoveringFavoriteUpdateResult, String> {
-    let mut event_sink = |event: &FavoriteUpdateRecoveryEvent| {
-        let _ = app.emit(FAVORITE_UPDATE_RECOVERY_EVENT, event);
-    };
-    trigger_all_favorite_updates_with_recovery_inner_with_event_sink(
-        executable_path,
-        max_comics,
-        max_restarts,
-        &mut event_sink,
-    )
-}
-
-#[tauri::command]
-fn queue_mangacon_updates(
-    manga_con_database_path: String,
-    executable_path: String,
-    companion_database_path: Option<String>,
-    max_updates: Option<u32>,
-) -> Result<QueueMangaConUpdatesCommandResult, String> {
-    let companion_database_path = companion_database_path.as_deref().map(Path::new);
-    let queue = queue_updates_including_local_gaps(
-        manga_con_database_path,
-        companion_database_path,
-        max_updates,
-    )
-    .map_err(|err| err.to_string())?;
-    let should_refresh_mangacon =
-        queue.queued > 0 || queue.skipped_existing > 0 || queue.cleared_update_markers > 0;
-    let (launched, launch_pid, confirm) = if should_refresh_mangacon {
-        let launch = restart_mangacon_process(executable_path).map_err(|err| err.to_string())?;
-        let confirm =
-            confirm_continue_download_dialog_after_restart().map_err(|err| err.to_string())?;
-        (true, Some(launch.pid), confirm)
-    } else {
-        (
-            false,
-            None,
-            ContinueDownloadConfirmResult {
-                found: false,
-                clicked: false,
-                dialog_title: None,
-            },
-        )
-    };
-
-    let QueueMangaConUpdatesResult {
-        backup_path,
-        total_updates,
-        queued,
-        skipped_existing,
-        cleared_update_markers,
-        tasks,
-    } = queue;
-    Ok(QueueMangaConUpdatesCommandResult {
-        backup_path,
-        total_updates,
-        queued,
-        skipped_existing,
-        cleared_update_markers,
-        launched,
-        launch_pid,
-        confirm,
-        tasks,
-    })
-}
-
-fn import_favorites_inner(
-    favorites_json_path: Option<String>,
-    _bookshelf_root: Option<String>,
-    database_path: String,
-) -> anyhow::Result<ImportSummary> {
-    let defaults = AppConfig::default();
-    let favorites_path = favorites_json_path
-        .map(PathBuf::from)
-        .unwrap_or(defaults.mangacon_favorites_json);
-
-    let mut comics = import_mangacon_favorites(favorites_path)?;
-    let mut db = CompanionDatabase::open(database_path)?;
-    db.migrate()?;
-    let existing_by_id: HashMap<String, Comic> = db
-        .list_comics()?
-        .into_iter()
-        .map(|comic| (comic.id.clone(), comic))
-        .collect();
-
-    for comic in &mut comics {
-        if let Some(existing) = existing_by_id.get(&comic.id) {
-            preserve_local_index_metadata(comic, existing);
-        } else {
-            comic.scan_status = domain::ScanStatus::Imported;
-        }
-    }
-    db.upsert_comics(&comics)?;
-
-    Ok(ImportSummary {
-        imported: comics.len(),
-        matched: 0,
-        favorites: comics,
-    })
-}
-
-fn load_imported_comics_inner(database_path: String) -> anyhow::Result<Vec<Comic>> {
-    let db = CompanionDatabase::open(database_path)?;
-    db.migrate()?;
-    db.list_comics()
-}
-
-fn preserve_local_index_metadata(imported: &mut Comic, existing: &Comic) {
-    imported.local_path = existing.local_path.clone();
-    imported.cover_path = existing.cover_path.clone();
-    imported.chapter_count = existing.chapter_count;
-    imported.image_count = existing.image_count;
-    imported.latest_chapter_title = existing.latest_chapter_title.clone();
-    imported.read_progress_page = existing.read_progress_page;
-    imported.scan_status = existing.scan_status;
-    imported.has_update = existing.has_update;
-}
-
-fn sync_bookshelf_matches_inner(
+async fn set_comic_cover(
+    app: tauri::AppHandle,
     bookshelf_root: String,
     database_path: String,
-    manga_con_database_path: String,
-) -> anyhow::Result<SyncBookshelfMatchesResult> {
-    let bookshelf_root = PathBuf::from(bookshelf_root);
-    let database_path = PathBuf::from(database_path);
-    let cover_cache_dir = database_path
-        .parent()
-        .map(|parent| parent.join(".mangacon-companion").join("covers"))
-        .unwrap_or_else(|| PathBuf::from(".mangacon-companion").join("covers"));
-    let db = CompanionDatabase::open(&database_path)?;
-    db.migrate()?;
-    let mut comics = db.list_comics()?;
-    let manga_cache = read_manga_cache_records(manga_con_database_path, cover_cache_dir)?;
-    let mut scanned_count = 0;
-    let mut matched_count = 0;
-    let mut missing_count = 0;
-
-    for comic in &mut comics {
-        if let Some(cache) = manga_cache.get(&comic.source_uri) {
-            comic.cover_path = cache.cover_path.clone();
-            comic.has_update = cache.has_update;
-        } else if comic.cover_path.as_ref().is_some_and(|path| {
-            path.components()
-                .any(|component| component.as_os_str() == ".mangacon-companion")
-        }) {
-            comic.cover_path = None;
-            comic.has_update = false;
-        } else {
-            comic.has_update = false;
-        }
-
-        if let Some(local_directory) = resolve_incremental_local_directory(comic, &bookshelf_root) {
-            scanned_count += 1;
-            let fingerprint = manga_directory_fingerprint(&local_directory)?;
-            let previous_fingerprint = db.local_fingerprint_for_comic(&comic.id)?;
-            let same_directory = comic
-                .local_path
-                .as_ref()
-                .is_some_and(|path| same_path(path, &local_directory));
-            let can_reuse_index = same_directory
-                && previous_fingerprint.as_deref() == Some(fingerprint.as_str())
-                && comic.scan_status == domain::ScanStatus::Matched
-                && comic.chapter_count > 0;
-
-            if !can_reuse_index {
-                let chapters = scan_comic_chapters(&comic.id, &local_directory)?;
-                comic.chapter_count = chapters.len();
-                comic.image_count = chapters.iter().map(|chapter| chapter.page_count).sum();
-                comic.latest_chapter_title = latest_chapter_title(&chapters);
-                db.replace_chapters_for_comic(&comic.id, &chapters)?;
-            }
-
-            comic.local_path = Some(local_directory.clone());
-            if comic.cover_path.is_none() {
-                comic.cover_path = find_first_image_page(&local_directory)?;
-            }
-            comic.scan_status = domain::ScanStatus::Matched;
-            matched_count += 1;
-            db.upsert_comic(comic)?;
-            db.update_local_fingerprint_for_comic(&comic.id, Some(&fingerprint))?;
-        } else {
-            comic.local_path = None;
-            comic.chapter_count = 0;
-            comic.image_count = 0;
-            comic.latest_chapter_title = None;
-            comic.scan_status = domain::ScanStatus::Missing;
-            missing_count += 1;
-            db.replace_chapters_for_comic(&comic.id, &[])?;
-            db.upsert_comic(comic)?;
-            db.update_local_fingerprint_for_comic(&comic.id, None)?;
-        }
-    }
-
-    let favorites = db.list_comics()?;
-    Ok(SyncBookshelfMatchesResult {
-        imported: comics.len(),
-        scanned: scanned_count,
-        matched: matched_count,
-        missing: missing_count,
-        orphaned: 0,
-        favorites,
-    })
-}
-
-fn resolve_incremental_local_directory(comic: &Comic, bookshelf_root: &Path) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = &comic.local_path {
-        candidates.push(path.clone());
-    }
-    for title in [&comic.location, &comic.name] {
-        if !title.trim().is_empty() {
-            candidates.push(bookshelf_root.join(title));
-        }
-    }
-
-    let mut seen = HashSet::new();
-    candidates.into_iter().find(|candidate| {
-        let key = candidate.to_string_lossy().to_string();
-        seen.insert(key) && candidate.is_dir()
-    })
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    if cfg!(windows) {
-        left.to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy())
-    } else {
-        left == right
-    }
-}
-
-fn latest_chapter_title(chapters: &[Chapter]) -> Option<String> {
-    chapters
-        .iter()
-        .rev()
-        .find(|chapter| chapter.special_kind == domain::ChapterKind::Regular)
-        .or_else(|| chapters.last())
-        .map(|chapter| chapter.title.clone())
-}
-
-fn ensure_mangacon_running_inner(
-    executable_path: String,
-) -> Result<EnsureMangaConRunningResult, String> {
-    ensure_mangacon_running_inner_with_hooks(
-        executable_path,
-        mangacon::window::find_mangacon_windows,
-        |path| launch_mangacon_process(path),
-        confirm_continue_download_dialog_after_restart,
-        confirm_continue_download_dialog_if_present,
-    )
-}
-
-fn ensure_mangacon_running_inner_with_hooks<F, L, C, E>(
-    executable_path: String,
-    find_windows: F,
-    launch_mangacon: L,
-    confirm_after_launch: C,
-    confirm_existing: E,
-) -> Result<EnsureMangaConRunningResult, String>
-where
-    F: FnOnce() -> Vec<MangaConWindow>,
-    L: FnOnce(String) -> Result<LaunchResult, mangacon::process::MangaConProcessError>,
-    C: FnOnce() -> anyhow::Result<ContinueDownloadConfirmResult>,
-    E: FnOnce() -> anyhow::Result<ContinueDownloadConfirmResult>,
-{
-    let windows = find_windows();
-    if !windows.is_empty() {
-        let _ = confirm_existing().map_err(|err| err.to_string())?;
-        return Ok(EnsureMangaConRunningResult {
-            launched: false,
-            launch_pid: None,
-            windows,
-        });
-    }
-
-    let launch = launch_mangacon(executable_path).map_err(|err| err.to_string())?;
-    let _ = confirm_after_launch().map_err(|err| err.to_string())?;
-    Ok(EnsureMangaConRunningResult {
-        launched: true,
-        launch_pid: Some(launch.pid),
-        windows: Vec::new(),
-    })
-}
-
-fn trigger_all_favorite_updates_with_recovery_inner_with_event_sink<F>(
-    executable_path: String,
-    max_comics: Option<u32>,
-    max_restarts: Option<u32>,
-    event_sink: &mut F,
-) -> Result<RecoveringFavoriteUpdateResult, String>
-where
-    F: FnMut(&FavoriteUpdateRecoveryEvent),
-{
-    let requested_limit = favorite_update_all_limit(max_comics);
-    let max_restarts = favorite_update_recovery_restart_limit(max_restarts);
-    let mut restarts = 0;
-    let mut last_error = None;
-    let mut runs = Vec::new();
-    let mut events = Vec::new();
-    record_recovery_event(
-        &mut events,
-        event_sink,
-        FavoriteUpdateRecoveryEvent::started(requested_limit),
-    );
-
-    loop {
-        let run_result = {
-            let current_restarts = restarts;
-            let mut progress_sink = |progress| {
-                record_recovery_event(
-                    &mut events,
-                    event_sink,
-                    recovery_event_from_favorite_progress(progress, current_restarts),
-                );
-            };
-            trigger_all_favorite_updates_with_progress(Some(requested_limit), &mut progress_sink)
-        };
-        match run_result {
-            Ok(run) => {
-                record_recovery_event(
-                    &mut events,
-                    event_sink,
-                    FavoriteUpdateRecoveryEvent::run_completed(
-                        runs.len() as u32 + 1,
-                        &run,
-                        restarts,
-                    ),
-                );
-                runs.push(run);
-                return Ok(recovering_favorite_update_result_with_event_sink(
-                    FavoriteUpdateRecoveryResultInput {
-                        requested_limit,
-                        max_restarts,
-                        restarts,
-                        stopped_reason: FavoriteUpdateRecoveryStoppedReason::Completed,
-                        last_error,
-                        runs,
-                        events,
-                    },
-                    event_sink,
+    comic_id: String,
+    source_path: String,
+) -> Result<Option<Comic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LibraryDbState>();
+        state
+            .with(&database_path, |db| {
+                let Some(mut comic) = db.get_comic(&comic_id)? else {
+                    return Ok(None);
+                };
+                comic.cover_path = Some(cover_or_source(
+                    std::path::Path::new(&bookshelf_root),
+                    &comic_id,
+                    std::path::PathBuf::from(source_path),
                 ));
-            }
-            Err(error) => {
-                let error_message = error.to_string();
-                last_error = Some(error_message.clone());
-                let (processed, downloaded_chapters, skipped_count) =
-                    favorite_update_run_totals(&runs);
-                record_recovery_event(
-                    &mut events,
-                    event_sink,
-                    FavoriteUpdateRecoveryEvent::error(
-                        error_message,
-                        processed,
-                        downloaded_chapters,
-                        skipped_count,
-                        restarts,
-                    ),
-                );
-
-                if restarts >= max_restarts {
-                    return Ok(recovering_favorite_update_result_with_event_sink(
-                        FavoriteUpdateRecoveryResultInput {
-                            requested_limit,
-                            max_restarts,
-                            restarts,
-                            stopped_reason:
-                                FavoriteUpdateRecoveryStoppedReason::RestartLimitReached,
-                            last_error,
-                            runs,
-                            events,
-                        },
-                        event_sink,
-                    ));
-                }
-
-                restart_mangacon_process(&executable_path).map_err(|err| err.to_string())?;
-                restarts += 1;
-                record_recovery_event(
-                    &mut events,
-                    event_sink,
-                    FavoriteUpdateRecoveryEvent::restarted(restarts, max_restarts).with_totals(
-                        processed,
-                        downloaded_chapters,
-                        skipped_count,
-                    ),
-                );
-                thread::sleep(Duration::from_millis(MANGACON_RECOVERY_REFRESH_WAIT_MS));
-            }
-        }
-    }
+                db.upsert_comic(&comic)?;
+                db.get_comic(&comic_id)
+            })
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
-struct FavoriteUpdateRecoveryResultInput {
-    requested_limit: u32,
-    max_restarts: u32,
-    restarts: u32,
-    stopped_reason: FavoriteUpdateRecoveryStoppedReason,
-    last_error: Option<String>,
-    runs: Vec<TriggerFavoriteUpdateBatchResult>,
-    events: Vec<FavoriteUpdateRecoveryEvent>,
+#[tauri::command]
+async fn library_cache_stats(
+    bookshelf_root: String,
+    extra_roots: Option<Vec<String>>,
+) -> Result<CacheStats, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        cache_stats_inner(bookshelf_root, extra_roots.unwrap_or_default().as_slice())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
 }
 
-#[cfg(test)]
-fn recovering_favorite_update_result(
-    input: FavoriteUpdateRecoveryResultInput,
-) -> RecoveringFavoriteUpdateResult {
-    let mut event_sink = |_event: &FavoriteUpdateRecoveryEvent| {};
-    recovering_favorite_update_result_with_event_sink(input, &mut event_sink)
-}
-
-fn recovering_favorite_update_result_with_event_sink<F>(
-    input: FavoriteUpdateRecoveryResultInput,
-    event_sink: &mut F,
-) -> RecoveringFavoriteUpdateResult
-where
-    F: FnMut(&FavoriteUpdateRecoveryEvent),
-{
-    let FavoriteUpdateRecoveryResultInput {
-        requested_limit,
-        max_restarts,
-        restarts,
-        stopped_reason,
-        last_error,
-        runs,
-        mut events,
-    } = input;
-    let (processed, downloaded_chapters, skipped_count) = favorite_update_run_totals(&runs);
-
-    match stopped_reason {
-        FavoriteUpdateRecoveryStoppedReason::Completed => {
-            record_recovery_event(
-                &mut events,
-                event_sink,
-                FavoriteUpdateRecoveryEvent::completed(
-                    processed,
-                    downloaded_chapters,
-                    skipped_count,
-                    restarts,
-                ),
-            );
-        }
-        FavoriteUpdateRecoveryStoppedReason::RestartLimitReached => {
-            record_recovery_event(
-                &mut events,
-                event_sink,
-                FavoriteUpdateRecoveryEvent::restart_limit_reached(
-                    processed,
-                    downloaded_chapters,
-                    skipped_count,
-                    restarts,
-                ),
-            );
-        }
-    }
-
-    RecoveringFavoriteUpdateResult {
-        requested_limit,
-        max_restarts,
-        restarts,
-        processed,
-        downloaded_chapters,
-        skipped_count,
-        stopped_reason,
-        last_error,
-        events,
-        runs,
-    }
-}
-
-fn record_recovery_event<F>(
-    events: &mut Vec<FavoriteUpdateRecoveryEvent>,
-    event_sink: &mut F,
-    event: FavoriteUpdateRecoveryEvent,
-) where
-    F: FnMut(&FavoriteUpdateRecoveryEvent),
-{
-    event_sink(&event);
-    events.push(event);
-}
-
-fn recovery_event_from_favorite_progress(
-    progress: FavoriteUpdateProgress,
-    restarts: u32,
-) -> FavoriteUpdateRecoveryEvent {
-    match progress.kind {
-        FavoriteUpdateProgressKind::ComicDownloaded => {
-            FavoriteUpdateRecoveryEvent::comic_downloaded(
-                progress.processed,
-                progress.downloaded_chapters,
-                progress.skipped_count,
-                progress.chapter_delta,
-            )
-            .with_restarts(restarts)
-        }
-        FavoriteUpdateProgressKind::ComicSkipped => FavoriteUpdateRecoveryEvent::comic_skipped(
-            progress.processed,
-            progress.downloaded_chapters,
-            progress.skipped_count,
+#[tauri::command]
+async fn clear_library_cache(
+    bookshelf_root: String,
+    extra_roots: Option<Vec<String>>,
+) -> Result<CacheStats, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        clear_extract_cache_inner(
+            bookshelf_root,
+            extra_roots.unwrap_or_default().as_slice(),
+            Some(0),
         )
-        .with_restarts(restarts),
-    }
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
 }
 
-fn favorite_update_run_totals(runs: &[TriggerFavoriteUpdateBatchResult]) -> (u32, u32, u32) {
-    (
-        runs.iter().map(|run| run.processed).sum(),
-        runs.iter().map(|run| run.downloaded_chapters).sum(),
-        runs.iter().map(|run| run.skipped.len() as u32).sum(),
-    )
+#[tauri::command]
+fn get_app_version() -> String {
+    app_version().to_string()
 }
 
-fn favorite_update_recovery_restart_limit(max_restarts: Option<u32>) -> u32 {
-    max_restarts
-        .unwrap_or(FAVORITE_UPDATE_RECOVERY_DEFAULT_RESTARTS)
-        .clamp(0, FAVORITE_UPDATE_RECOVERY_MAX_RESTARTS)
+#[tauri::command]
+async fn check_local_installer_updates() -> Result<LocalUpdateCheckResult, String> {
+    tauri::async_runtime::spawn_blocking(|| check_github_updates(app_version()))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
-fn confirm_continue_download_dialog_after_restart() -> anyhow::Result<ContinueDownloadConfirmResult>
-{
-    poll_continue_download_confirm(
-        MANGACON_CONTINUE_CONFIRM_ATTEMPTS,
-        Duration::from_millis(MANGACON_CONTINUE_CONFIRM_POLL_MS),
-        confirm_continue_download_dialog,
-        thread::sleep,
-    )
-}
-
-fn confirm_continue_download_dialog_if_present() -> anyhow::Result<ContinueDownloadConfirmResult> {
-    poll_continue_download_confirm(
-        MANGACON_EXISTING_CONTINUE_CONFIRM_ATTEMPTS,
-        Duration::from_millis(MANGACON_CONTINUE_CONFIRM_POLL_MS),
-        confirm_continue_download_dialog,
-        thread::sleep,
-    )
-}
-
-fn poll_continue_download_confirm<F, S>(
-    attempts: usize,
-    interval: Duration,
-    mut confirm: F,
-    mut sleep: S,
-) -> anyhow::Result<ContinueDownloadConfirmResult>
-where
-    F: FnMut() -> anyhow::Result<ContinueDownloadConfirmResult>,
-    S: FnMut(Duration),
-{
-    let attempts = attempts.max(1);
-
-    for attempt in 0..attempts {
-        let result = confirm()?;
-        if result.clicked || result.found {
-            return Ok(result);
+#[tauri::command]
+async fn open_local_installer(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if path.starts_with("http://") || path.starts_with("https://") {
+            let file_name = path
+                .rsplit('/')
+                .next()
+                .unwrap_or("MangaShelf-setup.exe")
+                .to_string();
+            return download_and_install_update(&path, &file_name);
         }
-
-        if attempt + 1 < attempts {
-            sleep(interval);
-        }
-    }
-
-    Ok(database_auto_resume_confirm_result())
+        crate::update::open_local_installer(path)
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
-fn database_auto_resume_confirm_result() -> ContinueDownloadConfirmResult {
-    ContinueDownloadConfirmResult {
-        found: false,
-        clicked: false,
-        dialog_title: Some("continue_last_session_tasks".to_string()),
-    }
+#[tauri::command]
+async fn install_app_update(download_url: String, file_name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        download_and_install_update(&download_url, &file_name)
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            app.manage(ScanControl {
+                requested: Arc::new(AtomicBool::new(false)),
+            });
+            app.manage(LibraryDbState {
+                inner: std::sync::Mutex::new(None),
+            });
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(true);
+                let _ = window.set_closable(true);
+                let _ = window.set_resizable(true);
+                let _ = window.set_minimizable(true);
+                let _ = window.set_maximizable(true);
+                let _ = window.set_focus();
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
-            greet,
-            import_favorites,
-            sync_bookshelf_matches,
-            load_imported_comics,
+            load_library,
+            scan_library,
+            cancel_library_scan,
             scan_local_chapters,
             list_chapter_pages,
-            find_mangacon_windows,
-            launch_mangacon,
-            ensure_mangacon_running,
-            restart_mangacon,
-            get_automation_status,
-            scan_mangacon_badges,
-            get_mangacon_task_status,
-            repair_mangacon_failed_tasks,
-            resume_mangacon_unfinished_tasks,
-            open_mangacon_favorites,
-            open_first_updated_comic,
-            scan_favorites_updates,
-            scan_detail_updates,
-            trigger_first_detail_update_download,
-            trigger_detail_update_download_batch,
-            trigger_next_favorite_update_download,
-            trigger_favorite_update_batch,
-            trigger_all_favorite_updates,
-            trigger_all_favorite_updates_with_recovery,
-            queue_mangacon_updates
+            peek_chapter_first_page,
+            save_read_progress,
+            update_comic_metadata,
+            set_comic_favorite,
+            set_reader_prefs,
+            get_app_version,
+            check_local_installer_updates,
+            open_local_installer,
+            install_app_update,
+            pick_directory,
+            open_path,
+            path_is_directory,
+            allow_asset_root,
+            delete_library_comic,
+            clear_read_progress,
+            list_cover_candidates,
+            set_comic_cover,
+            library_cache_stats,
+            clear_library_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1130,602 +483,16 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::fs;
+    use crate::config::AppConfig;
 
     #[test]
-    fn import_favorites_summary_exposes_source_fields() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let favorites_path = temp.path().join("favorites.json");
-        let db_path = temp.path().join("state.sqlite");
-        fs::write(
-            &favorites_path,
-            r#"{"favorites":[{"location":"若世界處於黑夜","name":"若世界處於黑夜","tags":["むちまろ"],"uri":"cp:ruoshijiechuyuheiye"}]}"#,
-        )
-        .expect("favorites fixture");
-
-        let summary = import_favorites_inner(
-            Some(favorites_path.display().to_string()),
-            Some(temp.path().display().to_string()),
-            db_path.display().to_string(),
-        )
-        .expect("import summary");
-
-        assert_eq!(summary.imported, 1);
-        assert_eq!(summary.favorites[0].source_uri, "cp:ruoshijiechuyuheiye");
-        assert_eq!(summary.favorites[0].source_scheme.as_deref(), Some("cp"));
-    }
-
-    #[test]
-    fn import_favorites_does_not_scan_bookshelf_during_import() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let favorites_path = temp.path().join("favorites.json");
-        let db_path = temp.path().join("state.sqlite");
-        let local_chapter = temp.path().join("若世界處於黑夜").join("第001话");
-        fs::create_dir_all(&local_chapter).expect("local chapter dir");
-        fs::write(local_chapter.join("001.jpg"), b"image").expect("local image");
-        fs::write(
-            &favorites_path,
-            r#"{"favorites":[{"location":"若世界處於黑夜","name":"若世界處於黑夜","tags":["むちまろ"],"uri":"cp:ruoshijiechuyuheiye"}]}"#,
-        )
-        .expect("favorites fixture");
-
-        let summary = import_favorites_inner(
-            Some(favorites_path.display().to_string()),
-            Some(temp.path().display().to_string()),
-            db_path.display().to_string(),
-        )
-        .expect("import summary");
-
-        assert_eq!(summary.imported, 1);
-        assert_eq!(summary.matched, 0);
-        assert_eq!(summary.favorites[0].local_path, None);
-        assert_eq!(summary.favorites[0].chapter_count, 0);
-        assert_eq!(summary.favorites[0].image_count, 0);
-        assert_eq!(
-            summary.favorites[0].scan_status,
-            domain::ScanStatus::Imported
+    fn default_config_is_local_bookshelf_only() {
+        let config = AppConfig::default();
+        assert_eq!(config.bookshelf_root.display().to_string(), r"E:\书架");
+        let db = config.library_database.display().to_string();
+        assert!(
+            db.ends_with("manga-library.sqlite") || db.ends_with("mangacon-companion.sqlite"),
+            "{db}"
         );
-    }
-
-    #[test]
-    fn import_favorites_preserves_existing_local_index_metadata() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let favorites_path = temp.path().join("favorites.json");
-        let db_path = temp.path().join("state.sqlite");
-        let local_path = temp.path().join("bookshelf").join("Indexed");
-        let cover_path = temp
-            .path()
-            .join(".mangacon-companion")
-            .join("covers")
-            .join("31.png");
-        fs::create_dir_all(&local_path).expect("local dir");
-        fs::create_dir_all(cover_path.parent().expect("cover parent")).expect("cover dir");
-        fs::write(&cover_path, b"cover").expect("cover");
-        fs::write(
-            &favorites_path,
-            r#"{"favorites":[{"location":"Indexed","name":"Indexed","tags":["tag"],"uri":"cp:indexed"}]}"#,
-        )
-        .expect("favorites fixture");
-
-        let db = CompanionDatabase::open(&db_path).expect("db open");
-        db.migrate().expect("migrate");
-        let mut comic = domain::Comic::from_mangacon_favorite(
-            "Indexed",
-            "Indexed",
-            "cp:indexed",
-            None,
-            vec!["old".to_string()],
-        );
-        comic.local_path = Some(local_path.clone());
-        comic.cover_path = Some(cover_path.clone());
-        comic.chapter_count = 12;
-        comic.image_count = 345;
-        comic.latest_chapter_title = Some("第12话".to_string());
-        comic.scan_status = domain::ScanStatus::Matched;
-        comic.has_update = true;
-        db.upsert_comic(&comic).expect("seed indexed comic");
-        drop(db);
-
-        let summary = import_favorites_inner(
-            Some(favorites_path.display().to_string()),
-            Some(temp.path().display().to_string()),
-            db_path.display().to_string(),
-        )
-        .expect("import summary");
-
-        assert_eq!(summary.imported, 1);
-        assert_eq!(summary.favorites[0].local_path.as_ref(), Some(&local_path));
-        assert_eq!(summary.favorites[0].cover_path.as_ref(), Some(&cover_path));
-        assert_eq!(summary.favorites[0].chapter_count, 12);
-        assert_eq!(summary.favorites[0].image_count, 345);
-        assert_eq!(
-            summary.favorites[0].latest_chapter_title.as_deref(),
-            Some("第12话")
-        );
-        assert_eq!(
-            summary.favorites[0].scan_status,
-            domain::ScanStatus::Matched
-        );
-        assert!(summary.favorites[0].has_update);
-    }
-
-    #[test]
-    fn load_imported_comics_reads_existing_companion_index_without_scanning() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let db_path = temp.path().join("state.sqlite");
-        let local_path = temp.path().join("bookshelf").join("Indexed");
-        fs::create_dir_all(&local_path).expect("local dir");
-        let db = CompanionDatabase::open(&db_path).expect("db open");
-        db.migrate().expect("migrate");
-        let mut comic = domain::Comic::from_mangacon_favorite(
-            "Indexed",
-            "Indexed",
-            "cp:indexed",
-            None,
-            Vec::new(),
-        );
-        comic.local_path = Some(local_path.clone());
-        comic.chapter_count = 3;
-        comic.image_count = 90;
-        comic.scan_status = domain::ScanStatus::Matched;
-        db.upsert_comic(&comic).expect("seed comic");
-        drop(db);
-
-        let comics = load_imported_comics_inner(db_path.display().to_string())
-            .expect("load imported comics");
-
-        assert_eq!(comics.len(), 1);
-        assert_eq!(comics[0].local_path.as_ref(), Some(&local_path));
-        assert_eq!(comics[0].chapter_count, 3);
-        assert_eq!(comics[0].image_count, 90);
-        assert_eq!(comics[0].scan_status, domain::ScanStatus::Matched);
-    }
-
-    #[test]
-    fn bookshelf_sync_uses_local_first_page_when_mangacon_cover_is_missing() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let db_path = temp.path().join("state.sqlite");
-        let bookshelf_root = temp.path().join("bookshelf");
-        let chapter = bookshelf_root.join("Local Cover").join("chapter-01");
-        fs::create_dir_all(&chapter).expect("chapter dir");
-        fs::write(chapter.join("002.jpg"), b"image").expect("late page");
-        fs::write(chapter.join("001.png"), b"image").expect("first page");
-
-        let mangacon_db_path = temp.path().join("MangaCon.dat");
-        let connection = rusqlite::Connection::open(&mangacon_db_path).expect("mangacon db");
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE mc3_badges(category INTEGER NOT NULL, id INTEGER NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(category, id)) WITHOUT ROWID;
-                CREATE TABLE mc3_mangas(uri TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT, groups TEXT, location TEXT NOT NULL, status INTEGER, order_tick INTEGER NOT NULL DEFAULT 0, update_tick INTEGER NOT NULL DEFAULT 0);
-                "#,
-            )
-            .expect("mangacon schema");
-        connection
-            .execute(
-                "INSERT INTO mc3_mangas(rowid, uri, name, domain, location, status, order_tick, update_tick) VALUES (31, 'cp:local-cover', 'Local Cover', NULL, 'Local Cover', 2, 1, 1)",
-                [],
-            )
-            .expect("mangacon manga");
-        drop(connection);
-
-        let mut db = CompanionDatabase::open(&db_path).expect("db open");
-        db.migrate().expect("migrate");
-        let mut comic = domain::Comic::from_mangacon_favorite(
-            "Local Cover",
-            "Local Cover",
-            "cp:local-cover",
-            None,
-            Vec::new(),
-        );
-        comic.scan_status = domain::ScanStatus::Imported;
-        db.upsert_comics(&[comic]).expect("seed imported favorite");
-        drop(db);
-
-        let summary = sync_bookshelf_matches_inner(
-            bookshelf_root.display().to_string(),
-            db_path.display().to_string(),
-            mangacon_db_path.display().to_string(),
-        )
-        .expect("sync bookshelf");
-
-        let synced = summary
-            .favorites
-            .iter()
-            .find(|comic| comic.source_uri == "cp:local-cover")
-            .expect("synced comic");
-        let cover_path = synced.cover_path.as_ref().expect("local cover path");
-        assert!(cover_path.ends_with("001.png"));
-    }
-
-    #[test]
-    fn bookshelf_sync_reuses_cached_chapter_index_when_local_fingerprint_is_unchanged() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let db_path = temp.path().join("state.sqlite");
-        let bookshelf_root = temp.path().join("bookshelf");
-        let comic_dir = bookshelf_root.join("Stable Index");
-        let chapter = comic_dir.join("chapter-01");
-        fs::create_dir_all(&chapter).expect("chapter dir");
-        fs::write(chapter.join("001.jpg"), b"image").expect("page");
-
-        let mangacon_db_path = temp.path().join("MangaCon.dat");
-        let connection = rusqlite::Connection::open(&mangacon_db_path).expect("mangacon db");
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE mc3_badges(category INTEGER NOT NULL, id INTEGER NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(category, id)) WITHOUT ROWID;
-                CREATE TABLE mc3_mangas(uri TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT, groups TEXT, location TEXT NOT NULL, status INTEGER, order_tick INTEGER NOT NULL DEFAULT 0, update_tick INTEGER NOT NULL DEFAULT 0);
-                "#,
-            )
-            .expect("mangacon schema");
-        connection
-            .execute(
-                "INSERT INTO mc3_mangas(rowid, uri, name, domain, location, status, order_tick, update_tick) VALUES (31, 'cp:stable', 'Stable Index', NULL, 'Stable Index', 2, 1, 1)",
-                [],
-            )
-            .expect("mangacon manga");
-        drop(connection);
-
-        let db = CompanionDatabase::open(&db_path).expect("db open");
-        db.migrate().expect("migrate");
-        let mut comic = domain::Comic::from_mangacon_favorite(
-            "Stable Index",
-            "Stable Index",
-            "cp:stable",
-            None,
-            Vec::new(),
-        );
-        comic.local_path = Some(comic_dir.clone());
-        comic.chapter_count = 9;
-        comic.image_count = 99;
-        comic.latest_chapter_title = Some("Cached chapter".to_string());
-        comic.scan_status = domain::ScanStatus::Matched;
-        db.upsert_comic(&comic).expect("seed comic");
-        let fingerprint = manga_directory_fingerprint(&comic_dir).expect("fingerprint");
-        db.update_local_fingerprint_for_comic("cp:stable", Some(&fingerprint))
-            .expect("seed fingerprint");
-        drop(db);
-
-        let summary = sync_bookshelf_matches_inner(
-            bookshelf_root.display().to_string(),
-            db_path.display().to_string(),
-            mangacon_db_path.display().to_string(),
-        )
-        .expect("sync bookshelf");
-
-        let synced = summary
-            .favorites
-            .iter()
-            .find(|comic| comic.source_uri == "cp:stable")
-            .expect("synced comic");
-        assert_eq!(synced.chapter_count, 9);
-        assert_eq!(synced.image_count, 99);
-        assert_eq!(
-            synced.latest_chapter_title.as_deref(),
-            Some("Cached chapter")
-        );
-    }
-
-    #[test]
-    fn restart_confirm_polls_until_continue_dialog_can_be_clicked() {
-        let mut attempts = 0;
-        let mut sleeps = Vec::new();
-
-        let result = poll_continue_download_confirm(
-            4,
-            Duration::from_millis(10),
-            || {
-                attempts += 1;
-                Ok(if attempts < 3 {
-                    ContinueDownloadConfirmResult {
-                        found: false,
-                        clicked: false,
-                        dialog_title: None,
-                    }
-                } else {
-                    ContinueDownloadConfirmResult {
-                        found: true,
-                        clicked: true,
-                        dialog_title: Some("漫画控".to_string()),
-                    }
-                })
-            },
-            |duration| sleeps.push(duration),
-        )
-        .expect("poll confirm");
-
-        assert!(result.clicked);
-        assert_eq!(result.dialog_title.as_deref(), Some("漫画控"));
-        assert_eq!(attempts, 3);
-        assert_eq!(
-            sleeps,
-            vec![Duration::from_millis(10), Duration::from_millis(10)]
-        );
-    }
-
-    #[test]
-    fn ensuring_existing_mangacon_also_confirms_continue_dialog() {
-        let window = MangaConWindow {
-            hwnd: 42,
-            title: "漫画控 v3.0.15.58 Beta4".to_string(),
-        };
-        let mut confirm_called = false;
-
-        let result = ensure_mangacon_running_inner_with_hooks(
-            "E:\\漫画控\\MangaCon.exe".to_string(),
-            || vec![window.clone()],
-            |_| panic!("existing MangaCon should not be launched again"),
-            || panic!("existing MangaCon should use existing-window confirmation"),
-            || {
-                confirm_called = true;
-                Ok(ContinueDownloadConfirmResult {
-                    found: true,
-                    clicked: true,
-                    dialog_title: Some("漫画控".to_string()),
-                })
-            },
-        )
-        .expect("ensure MangaCon running");
-
-        assert!(!result.launched);
-        assert_eq!(result.windows, vec![window]);
-        assert!(confirm_called);
-    }
-
-    #[test]
-    fn ensuring_launched_mangacon_confirms_continue_dialog_after_launch() {
-        let mut launched_path = None;
-        let mut confirm_called = false;
-
-        let result = ensure_mangacon_running_inner_with_hooks(
-            "E:\\漫画控\\MangaCon.exe".to_string(),
-            Vec::new,
-            |path| {
-                launched_path = Some(path);
-                Ok(LaunchResult { pid: 3052 })
-            },
-            || {
-                confirm_called = true;
-                Ok(ContinueDownloadConfirmResult {
-                    found: true,
-                    clicked: true,
-                    dialog_title: Some("漫画控".to_string()),
-                })
-            },
-            || panic!("newly launched MangaCon should use launch confirmation"),
-        )
-        .expect("ensure MangaCon running");
-
-        assert!(result.launched);
-        assert_eq!(result.launch_pid, Some(3052));
-        assert_eq!(launched_path.as_deref(), Some("E:\\漫画控\\MangaCon.exe"));
-        assert!(confirm_called);
-    }
-
-    #[test]
-    fn favorite_update_recovery_restart_limit_is_safe_and_bounded() {
-        assert_eq!(favorite_update_recovery_restart_limit(None), 2);
-        assert_eq!(favorite_update_recovery_restart_limit(Some(0)), 0);
-        assert_eq!(favorite_update_recovery_restart_limit(Some(4)), 4);
-        assert_eq!(favorite_update_recovery_restart_limit(Some(99)), 5);
-    }
-
-    #[test]
-    fn recovering_favorite_update_result_keeps_long_run_events() {
-        let run = TriggerFavoriteUpdateBatchResult {
-            requested_limit: 500,
-            processed: 2,
-            downloaded_chapters: 3,
-            stopped_reason: mangacon::navigation::FavoriteUpdateBatchStoppedReason::NoUpdateBadge,
-            skipped: Vec::new(),
-            items: Vec::new(),
-        };
-        let events = vec![
-            FavoriteUpdateRecoveryEvent::started(500),
-            FavoriteUpdateRecoveryEvent::error("漫画控窗口无响应".to_string(), 0, 0, 0, 0),
-            FavoriteUpdateRecoveryEvent::restarted(1, 2),
-        ];
-
-        let result = recovering_favorite_update_result(FavoriteUpdateRecoveryResultInput {
-            requested_limit: 500,
-            max_restarts: 2,
-            restarts: 1,
-            stopped_reason: FavoriteUpdateRecoveryStoppedReason::Completed,
-            last_error: Some("漫画控窗口无响应".to_string()),
-            runs: vec![run],
-            events,
-        });
-
-        assert_eq!(result.events.len(), 4);
-        assert_eq!(
-            result.events[0].kind,
-            FavoriteUpdateRecoveryEventKind::Started
-        );
-        assert_eq!(
-            result.events[1].kind,
-            FavoriteUpdateRecoveryEventKind::Error
-        );
-        assert_eq!(
-            result.events[2].kind,
-            FavoriteUpdateRecoveryEventKind::Restarted
-        );
-        assert_eq!(
-            result.events[3].kind,
-            FavoriteUpdateRecoveryEventKind::Completed
-        );
-        assert_eq!(result.events[3].message, "自动恢复长跑完成");
-        assert_eq!(result.events[3].processed, 2);
-        assert_eq!(result.events[3].downloaded_chapters, 3);
-        assert_eq!(result.events[3].restarts, 1);
-    }
-
-    #[test]
-    fn recording_recovery_event_pushes_event_and_notifies_sink() {
-        let mut events = Vec::new();
-        let mut emitted = Vec::new();
-
-        record_recovery_event(
-            &mut events,
-            &mut |event| emitted.push(event.clone()),
-            FavoriteUpdateRecoveryEvent::started(500),
-        );
-
-        assert_eq!(events.len(), 1);
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(events[0], emitted[0]);
-        assert_eq!(emitted[0].kind, FavoriteUpdateRecoveryEventKind::Started);
-    }
-
-    #[test]
-    fn recovery_events_describe_each_downloaded_and_skipped_comic() {
-        let downloaded = FavoriteUpdateRecoveryEvent::comic_downloaded(2, 7, 1, 4);
-        let skipped = FavoriteUpdateRecoveryEvent::comic_skipped(2, 7, 2);
-
-        assert_eq!(
-            downloaded.kind,
-            FavoriteUpdateRecoveryEventKind::ComicDownloaded
-        );
-        assert_eq!(downloaded.message, "第 2 本已交给漫画控，下载 4 话");
-        assert_eq!(downloaded.processed, 2);
-        assert_eq!(downloaded.downloaded_chapters, 7);
-        assert_eq!(downloaded.skipped_count, 1);
-
-        assert_eq!(skipped.kind, FavoriteUpdateRecoveryEventKind::ComicSkipped);
-        assert_eq!(skipped.message, "跳过 1 本：详情页没有更新红点");
-        assert_eq!(skipped.processed, 2);
-        assert_eq!(skipped.downloaded_chapters, 7);
-        assert_eq!(skipped.skipped_count, 2);
-    }
-
-    #[test]
-    fn import_favorites_summary_contains_only_current_import_batch() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let old_path = temp.path().join("old.json");
-        let new_path = temp.path().join("new.json");
-        let db_path = temp.path().join("state.sqlite");
-        fs::write(
-            &old_path,
-            r#"{"favorites":[{"location":"旧记录","name":"旧记录","tags":["old"],"uri":"cp:old"}]}"#,
-        )
-        .expect("old fixture");
-        fs::write(
-            &new_path,
-            r#"{"favorites":[{"location":"新记录","name":"新记录","tags":["new"],"uri":"cp:new"}]}"#,
-        )
-        .expect("new fixture");
-
-        import_favorites_inner(
-            Some(old_path.display().to_string()),
-            Some(temp.path().display().to_string()),
-            db_path.display().to_string(),
-        )
-        .expect("old import");
-        let summary = import_favorites_inner(
-            Some(new_path.display().to_string()),
-            Some(temp.path().display().to_string()),
-            db_path.display().to_string(),
-        )
-        .expect("new import");
-
-        assert_eq!(summary.imported, 1);
-        assert_eq!(summary.matched, 0);
-        assert_eq!(summary.favorites.len(), 1);
-        assert_eq!(summary.favorites[0].source_uri, "cp:new");
-    }
-
-    #[test]
-    fn bookshelf_sync_matches_imported_favorites_and_reads_mangacon_covers() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let db_path = temp.path().join("state.sqlite");
-        let bookshelf_root = temp.path().join("bookshelf");
-        let matched_chapter = bookshelf_root.join("若世界處於黑夜").join("第02话");
-        let orphan_chapter = bookshelf_root.join("本地孤儿漫画").join("第01话");
-        fs::create_dir_all(&matched_chapter).expect("matched chapter");
-        fs::create_dir_all(&orphan_chapter).expect("orphan chapter");
-        fs::write(matched_chapter.join("001.jpg"), b"image").expect("matched image");
-        fs::write(matched_chapter.join("002.jpg"), b"image").expect("matched image");
-        fs::write(orphan_chapter.join("001.jpg"), b"image").expect("orphan image");
-
-        let mangacon_db_path = temp.path().join("MangaCon.dat");
-        let covers_dir = temp.path().join("Covers");
-        fs::create_dir_all(&covers_dir).expect("covers dir");
-        fs::write(covers_dir.join("31"), b"\x89PNG\r\n\x1A\nfixture").expect("cover file");
-        let connection = rusqlite::Connection::open(&mangacon_db_path).expect("mangacon db");
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE mc3_badges(category INTEGER NOT NULL, id INTEGER NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(category, id)) WITHOUT ROWID;
-                CREATE TABLE mc3_mangas(uri TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT, groups TEXT, location TEXT NOT NULL, status INTEGER, order_tick INTEGER NOT NULL DEFAULT 0, update_tick INTEGER NOT NULL DEFAULT 0);
-                "#,
-            )
-            .expect("mangacon schema");
-        connection
-            .execute(
-                "INSERT INTO mc3_mangas(rowid, uri, name, domain, location, status, order_tick, update_tick) VALUES (31, 'cp:night', '若世界處於黑夜', NULL, '若世界處於黑夜', 2, 1, 1)",
-                [],
-            )
-            .expect("mangacon manga");
-        connection
-            .execute(
-                "INSERT INTO mc3_badges(category, id, value) VALUES (1, 31, 1)",
-                [],
-            )
-            .expect("mangacon update badge");
-        drop(connection);
-
-        let mut db = CompanionDatabase::open(&db_path).expect("db open");
-        db.migrate().expect("migrate");
-        let mut matched = domain::Comic::from_mangacon_favorite(
-            "若世界處於黑夜",
-            "若世界處於黑夜",
-            "cp:night",
-            None,
-            vec!["むちまろ".to_string()],
-        );
-        matched.scan_status = domain::ScanStatus::Imported;
-        let mut missing = domain::Comic::from_mangacon_favorite(
-            "不存在的收藏",
-            "不存在的收藏",
-            "cp:missing",
-            None,
-            Vec::new(),
-        );
-        missing.scan_status = domain::ScanStatus::Imported;
-        db.upsert_comics(&[matched, missing])
-            .expect("seed imported favorites");
-        drop(db);
-
-        let summary = sync_bookshelf_matches_inner(
-            bookshelf_root.display().to_string(),
-            db_path.display().to_string(),
-            mangacon_db_path.display().to_string(),
-        )
-        .expect("sync bookshelf");
-
-        assert_eq!(summary.imported, 2);
-        assert_eq!(summary.matched, 1);
-        assert_eq!(summary.missing, 1);
-        assert_eq!(summary.orphaned, 0);
-        let synced = summary
-            .favorites
-            .iter()
-            .find(|comic| comic.source_uri == "cp:night")
-            .expect("synced comic");
-        assert_eq!(synced.scan_status, domain::ScanStatus::Matched);
-        assert_eq!(synced.chapter_count, 1);
-        assert_eq!(synced.image_count, 2);
-        assert_eq!(synced.latest_chapter_title.as_deref(), Some("第02话"));
-        assert!(synced.has_update);
-        let cover_path = synced.cover_path.as_ref().expect("cover path");
-        assert!(cover_path.ends_with(".mangacon-companion/covers/31.png"));
-        assert!(cover_path.exists());
-
-        let chapters = CompanionDatabase::open(&db_path)
-            .expect("db reopen")
-            .list_chapters_for_comic("cp:night")
-            .expect("chapters");
-        assert_eq!(chapters.len(), 1);
-        assert_eq!(chapters[0].title, "第02话");
     }
 }

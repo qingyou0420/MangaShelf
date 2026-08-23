@@ -1,23 +1,26 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import {
-  ensureMangaConRunning,
-  getMangaConTaskStatus,
-  importFavorites,
+  allowAssetRoot,
+  cancelLibraryScan,
+  checkLocalInstallerUpdates,
+  getAppVersion,
   listChapterPages,
-  loadImportedComics,
-  listenFavoriteUpdateRecoveryEvents,
-  queueMangaConUpdates,
-  repairMangaConFailedTasks,
-  resumeMangaConUnfinishedTasks,
+  listenScanProgress,
+  loadLibrary,
+  openLocalInstaller,
+  openPath,
+  pathIsDirectory,
+  pickDirectory,
+  saveReadProgress,
+  scanLibrary,
   scanLocalChapters,
-  syncBookshelfMatches,
-  triggerAllFavoriteUpdatesWithRecovery,
+  setComicFavorite,
 } from "./lib/api";
-import { approvedDefaultPaths } from "./lib/defaults";
-import type { MangaConFavorite } from "./lib/types";
+import { defaultLibraryPaths } from "./lib/defaults";
+import type { LibraryComic } from "./lib/types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
@@ -26,142 +29,112 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("./lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/api")>()),
-  ensureMangaConRunning: vi.fn(),
-  getMangaConTaskStatus: vi.fn(),
-  importFavorites: vi.fn(),
+  allowAssetRoot: vi.fn(),
+  cancelLibraryScan: vi.fn(),
+  checkLocalInstallerUpdates: vi.fn(),
+  getAppVersion: vi.fn(),
   listChapterPages: vi.fn(),
-  loadImportedComics: vi.fn(),
-  listenFavoriteUpdateRecoveryEvents: vi.fn(),
-  queueMangaConUpdates: vi.fn(),
-  repairMangaConFailedTasks: vi.fn(),
-  resumeMangaConUnfinishedTasks: vi.fn(),
+  listenScanProgress: vi.fn().mockResolvedValue(() => undefined),
+  listenExtractProgress: vi.fn().mockResolvedValue(() => undefined),
+  loadLibrary: vi.fn(),
+  deleteLibraryComic: vi.fn(),
+  listCoverCandidates: vi.fn(),
+  setComicCover: vi.fn(),
+  openLocalInstaller: vi.fn(),
+  openPath: vi.fn(),
+  pickDirectory: vi.fn(),
+  pathIsDirectory: vi.fn().mockResolvedValue(true),
+  clearReadProgress: vi.fn(),
+  saveReadProgress: vi.fn(),
+  scanLibrary: vi.fn(),
   scanLocalChapters: vi.fn(),
-  syncBookshelfMatches: vi.fn(),
-  triggerAllFavoriteUpdatesWithRecovery: vi.fn(),
+  setComicFavorite: vi.fn(),
+  setReaderPrefs: vi.fn(),
+  updateComicMetadata: vi.fn(),
 }));
 
-const ensureMangaConRunningMock = vi.mocked(ensureMangaConRunning);
-const getMangaConTaskStatusMock = vi.mocked(getMangaConTaskStatus);
-const importFavoritesMock = vi.mocked(importFavorites);
+const checkLocalInstallerUpdatesMock = vi.mocked(checkLocalInstallerUpdates);
+const getAppVersionMock = vi.mocked(getAppVersion);
+const openLocalInstallerMock = vi.mocked(openLocalInstaller);
 const listChapterPagesMock = vi.mocked(listChapterPages);
-const loadImportedComicsMock = vi.mocked(loadImportedComics);
-const listenFavoriteUpdateRecoveryEventsMock = vi.mocked(
-  listenFavoriteUpdateRecoveryEvents,
-);
-const queueMangaConUpdatesMock = vi.mocked(queueMangaConUpdates);
-const repairMangaConFailedTasksMock = vi.mocked(repairMangaConFailedTasks);
-const resumeMangaConUnfinishedTasksMock = vi.mocked(
-  resumeMangaConUnfinishedTasks,
-);
+const listenScanProgressMock = vi.mocked(listenScanProgress);
+const loadLibraryMock = vi.mocked(loadLibrary);
+const saveReadProgressMock = vi.mocked(saveReadProgress);
+const scanLibraryMock = vi.mocked(scanLibrary);
 const scanLocalChaptersMock = vi.mocked(scanLocalChapters);
-const syncBookshelfMatchesMock = vi.mocked(syncBookshelfMatches);
-const triggerAllFavoriteUpdatesWithRecoveryMock = vi.mocked(
-  triggerAllFavoriteUpdatesWithRecovery,
-);
+const setComicFavoriteMock = vi.mocked(setComicFavorite);
+const allowAssetRootMock = vi.mocked(allowAssetRoot);
+const cancelLibraryScanMock = vi.mocked(cancelLibraryScan);
+const pickDirectoryMock = vi.mocked(pickDirectory);
+const openPathMock = vi.mocked(openPath);
+const pathIsDirectoryMock = vi.mocked(pathIsDirectory);
 
-const importedFavorites: MangaConFavorite[] = [
+const loadedComics: LibraryComic[] = [
   {
-    id: "cp:hzzsddhhshct",
+    id: "local:a",
     name: "婚纱之中待到花火散去",
     location: "婚纱之中待到花火散去",
     tags: ["测试作者"],
-    sourceUri: "cp:hzzsddhhshct",
-    sourceScheme: "cp",
-    sourceDomain: "www.2025copy.com",
-    chapterCount: 0,
-    imageCount: 0,
-    readProgressPage: 0,
-    scanStatus: "imported",
-  },
-  {
-    id: "mg:37753",
-    name: "航海士样本",
-    location: "航海士样本",
-    tags: [],
-    sourceUri: "mg:37753",
-    sourceScheme: "mg",
-    sourceDomain: "www.manhuagui.com",
-    chapterCount: 0,
-    imageCount: 0,
-    readProgressPage: 0,
-    scanStatus: "imported",
-  },
-];
-
-const syncedFavorites: MangaConFavorite[] = [
-  {
-    ...importedFavorites[0],
     localPath: "E:\\书架\\婚纱之中待到花火散去",
-    coverPath: "E:\\书架\\.mangacon-companion\\covers\\31.png",
+    coverPath: "E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg",
     chapterCount: 1,
     imageCount: 2,
     latestChapterTitle: "第01话",
+    readProgressPage: 0,
     scanStatus: "matched",
-    hasUpdate: true,
-  },
-  {
-    ...importedFavorites[1],
-    scanStatus: "missing",
-    hasUpdate: false,
+    favorited: false,
+    readingDirection: "ltr",
+    fitMode: "contain",
   },
 ];
 
 describe("App", () => {
   beforeEach(() => {
-    ensureMangaConRunningMock.mockReset();
-    getMangaConTaskStatusMock.mockReset();
-    importFavoritesMock.mockReset();
+    checkLocalInstallerUpdatesMock.mockReset();
+    getAppVersionMock.mockReset();
+    openLocalInstallerMock.mockReset();
     listChapterPagesMock.mockReset();
-    loadImportedComicsMock.mockReset();
-    listenFavoriteUpdateRecoveryEventsMock.mockReset();
-    queueMangaConUpdatesMock.mockReset();
-    repairMangaConFailedTasksMock.mockReset();
-    resumeMangaConUnfinishedTasksMock.mockReset();
+    listenScanProgressMock.mockReset();
+    loadLibraryMock.mockReset();
+    saveReadProgressMock.mockReset();
+    scanLibraryMock.mockReset();
     scanLocalChaptersMock.mockReset();
-    syncBookshelfMatchesMock.mockReset();
-    triggerAllFavoriteUpdatesWithRecoveryMock.mockReset();
+    setComicFavoriteMock.mockReset();
+    allowAssetRootMock.mockReset();
+    cancelLibraryScanMock.mockReset();
+    pickDirectoryMock.mockReset();
+    openPathMock.mockReset();
+    pathIsDirectoryMock.mockReset();
+    window.localStorage.clear();
 
-    ensureMangaConRunningMock.mockResolvedValue({
-      launched: false,
-      launchPid: null,
-      windows: [{ hwnd: 123, title: "漫画控 v3.0.15.58 Beta4" }],
+    listenScanProgressMock.mockResolvedValue(() => undefined);
+    allowAssetRootMock.mockResolvedValue(undefined);
+    cancelLibraryScanMock.mockResolvedValue(undefined);
+    pickDirectoryMock.mockResolvedValue(null);
+    openPathMock.mockResolvedValue(undefined);
+    pathIsDirectoryMock.mockResolvedValue(true);
+    getAppVersionMock.mockResolvedValue("2.0.0");
+    checkLocalInstallerUpdatesMock.mockResolvedValue({
+      currentVersion: "2.0.0",
+      hasUpdate: false,
+      latest: null,
+      packages: [],
+      searchedDirs: [],
     });
-    getMangaConTaskStatusMock.mockResolvedValue({
-      totalTasks: 0,
-      activeTasks: 0,
-      failedTasks: 0,
-      finishedTasks: 0,
-      totalErrors: 0,
-      continueLastSessionTasks: null,
-      continueLastSessionTasksValue: null,
+    openLocalInstallerMock.mockResolvedValue(undefined);
+    loadLibraryMock.mockResolvedValue({
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: [],
     });
-    loadImportedComicsMock.mockResolvedValue([]);
-    repairMangaConFailedTasksMock.mockResolvedValue({
-      backupPath:
-        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-2",
-      totalFailed: 0,
-      requeued: 0,
-      launched: false,
-      launchPid: null,
-      confirm: { found: false, clicked: false, dialogTitle: null },
-      tasks: [],
-    });
-    resumeMangaConUnfinishedTasksMock.mockResolvedValue({
-      backupPath:
-        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-3",
-      totalUnfinished: 0,
-      resumeConfigured: false,
-      launched: false,
-      launchPid: null,
-      confirm: { found: false, clicked: false, dialogTitle: null },
-    });
-    syncBookshelfMatchesMock.mockResolvedValue({
-      imported: 0,
+    scanLibraryMock.mockResolvedValue({
       scanned: 0,
-      matched: 0,
+      added: 0,
+      updated: 0,
       missing: 0,
-      orphaned: 0,
-      favorites: [],
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: [],
     });
   });
 
@@ -169,115 +142,87 @@ describe("App", () => {
     cleanup();
   });
 
-  it("启动伴侣后自动确保漫画控本体运行", async () => {
-    ensureMangaConRunningMock.mockResolvedValueOnce({
-      launched: true,
-      launchPid: 456,
-      windows: [],
+  it("启动时加载本地索引且不启动外部引擎", async () => {
+    loadLibraryMock.mockResolvedValue({
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: loadedComics,
     });
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(ensureMangaConRunningMock).toHaveBeenCalledWith({
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-      });
-    });
-    expect(screen.getAllByText("漫画控已启动，正在检索收藏更新...").length).toBeGreaterThan(
-      0,
-    );
-  });
-
-  it("启动时加载已有伴侣索引且不扫描书架", async () => {
-    loadImportedComicsMock.mockResolvedValue(syncedFavorites);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(loadImportedComicsMock).toHaveBeenCalledWith({
-        databasePath: approvedDefaultPaths.databasePath,
-      });
-    });
-    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
-    const favoritesMetric = screen.getByLabelText("收藏统计");
-    expect(within(favoritesMetric).getByText("2")).toBeInTheDocument();
-  });
-
-  it("导入收藏不自动扫描书架，手动扫描后才同步本地索引和封面", async () => {
-    const user = userEvent.setup();
-    importFavoritesMock.mockResolvedValue({
-      imported: 2,
-      matched: 0,
-      favorites: importedFavorites,
-    });
-    syncBookshelfMatchesMock.mockResolvedValue({
-      imported: 2,
-      scanned: 2,
-      matched: 1,
-      missing: 1,
-      orphaned: 0,
-      favorites: syncedFavorites,
-    });
-
-    render(<App />);
-
-    await user.click(screen.getByRole("button", { name: "导入漫画控收藏" }));
-
-    await waitFor(() => {
-      expect(importFavoritesMock).toHaveBeenCalledWith({
-        favoritesJsonPath: approvedDefaultPaths.mangaConFavoritesJson,
-        databasePath: approvedDefaultPaths.databasePath,
-      });
-    });
-    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
-
-    const favoritesMetric = screen.getByLabelText("收藏统计");
-    expect(within(favoritesMetric).getByText("2")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "扫描本地书架" }));
-
-    await waitFor(() => {
-      expect(syncBookshelfMatchesMock).toHaveBeenCalledWith({
-        bookshelfRoot: approvedDefaultPaths.bookshelfRoot,
-        databasePath: approvedDefaultPaths.databasePath,
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-      });
-    });
-    expect(
-      screen.getAllByText(
-        "书架扫描完成：收藏 2 条，匹配 1 条，缺失 1 条，暂未匹配历史文件夹 0 个",
-      ).length,
-    ).toBeGreaterThan(0);
-
-    await user.click(screen.getByRole("button", { name: "书库" }));
-
-    expect(screen.getAllByText("婚纱之中待到花火散去").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("已匹配本地").length).toBeGreaterThan(0);
-    expect(screen.getByAltText("婚纱之中待到花火散去 封面")).toHaveAttribute(
-      "src",
-      expect.stringContaining("31.png"),
-    );
-  });
-
-  it("可从书库打开已匹配漫画并进入本地阅读器", async () => {
-    const user = userEvent.setup();
-    importFavoritesMock.mockResolvedValue({
-      imported: 1,
-      matched: 0,
-      favorites: [importedFavorites[0]],
-    });
-    syncBookshelfMatchesMock.mockResolvedValue({
-      imported: 1,
+    scanLibraryMock.mockResolvedValue({
       scanned: 1,
-      matched: 1,
+      added: 0,
+      updated: 0,
+      unchanged: 1,
       missing: 0,
-      orphaned: 0,
-      favorites: [syncedFavorites[0]],
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: loadedComics,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(loadLibraryMock).toHaveBeenCalledWith({
+        ...defaultLibraryPaths,
+        extraRoots: [],
+      });
+    });
+    await waitFor(() => {
+      expect(scanLibraryMock).toHaveBeenCalled();
+    });
+    expect(screen.getByRole("heading", { name: "书库" })).toBeInTheDocument();
+    expect(screen.getAllByText("婚纱之中待到花火散去").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "下载" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/漫画控/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/下载引擎/)).not.toBeInTheDocument();
+  });
+
+  it("发现本地更高版本安装包时在版本号旁显示更新按钮并可启动安装", async () => {
+    const user = userEvent.setup();
+    checkLocalInstallerUpdatesMock.mockResolvedValue({
+      currentVersion: "2.0.0",
+      hasUpdate: true,
+      latest: {
+        path: "D:\\Grisia Studio\\Manga Library\\release\\Manga Library_2.1.0_x64-setup.exe",
+        fileName: "Manga Library_2.1.0_x64-setup.exe",
+        version: "2.1.0",
+        isNewer: true,
+      },
+      packages: [],
+      searchedDirs: ["D:\\Grisia Studio\\Manga Library\\release"],
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-app-update")).toHaveTextContent(
+        "更新 v2.1.0",
+      );
+    });
+
+    await user.click(screen.getByTestId("sidebar-app-update"));
+    await waitFor(() => {
+      expect(openLocalInstallerMock).toHaveBeenCalledWith(
+        "D:\\Grisia Studio\\Manga Library\\release\\Manga Library_2.1.0_x64-setup.exe",
+      );
+    });
+  });
+
+  it("扫描书架后可打开阅读并恢复进度", async () => {
+    const user = userEvent.setup();
+    scanLibraryMock.mockResolvedValue({
+      scanned: 1,
+      added: 1,
+      updated: 0,
+      missing: 0,
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: loadedComics,
     });
     scanLocalChaptersMock.mockResolvedValue([
       {
-        id: "cp:hzzsddhhshct::第01话",
-        comicId: "cp:hzzsddhhshct",
+        id: "local:a::第01话",
+        comicId: "local:a",
         title: "第01话",
         path: "E:\\书架\\婚纱之中待到花火散去\\第01话",
         ordinal: 1,
@@ -290,149 +235,85 @@ describe("App", () => {
       "E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg",
       "E:\\书架\\婚纱之中待到花火散去\\第01话\\002.jpg",
     ]);
+    saveReadProgressMock.mockResolvedValue({
+      ...loadedComics[0],
+      readProgressPage: 1,
+      lastReadChapterId: "local:a::第01话",
+      lastReadAt: "2026-08-17 12:00:00",
+    });
 
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "导入漫画控收藏" }));
-    await user.click(screen.getByRole("button", { name: "扫描本地书架" }));
-    await user.click(screen.getByRole("button", { name: "书库" }));
-    await user.click(
-      screen.getByRole("button", { name: "阅读 婚纱之中待到花火散去" }),
-    );
+    await user.click(screen.getByRole("button", { name: "扫描书架" }));
+    await waitFor(() => {
+      expect(scanLibraryMock).toHaveBeenCalledWith({
+        ...defaultLibraryPaths,
+        extraRoots: [],
+      });
+    });
+    expect(
+      screen.getAllByText(/扫描完成：新增 1，有变化 0，未变 0，未匹配 0/).length,
+    ).toBeGreaterThan(0);
 
+    await user.click(
+      screen.getByRole("button", { name: "查看 婚纱之中待到花火散去" }),
+    );
+    expect(await screen.findByRole("button", { name: "开始阅读" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "开始阅读" }));
     expect(
       await screen.findByRole("heading", { name: "婚纱之中待到花火散去" }),
     ).toBeInTheDocument();
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回书库" })).toBeInTheDocument();
   });
 
-  it("一键更新收藏不会触发本地书架扫描", async () => {
+  it("continues from the library card and returns to the library", async () => {
     const user = userEvent.setup();
-    queueMangaConUpdatesMock.mockResolvedValue({
-      backupPath:
-        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-1",
-      totalUpdates: 34,
-      queued: 33,
-      skippedExisting: 1,
-      clearedUpdateMarkers: 34,
-      launched: true,
-      confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
-      tasks: [],
+    const historyComic = {
+      ...loadedComics[0],
+      lastReadAt: "2026-08-17 12:00:00",
+      lastReadChapterId: "local:a::第01话",
+      lastReadChapterTitle: "第01话",
+      readProgressPage: 1,
+    };
+    loadLibraryMock.mockResolvedValue({
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: [historyComic],
     });
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(ensureMangaConRunningMock).toHaveBeenCalledTimes(1);
+    scanLibraryMock.mockResolvedValue({
+      scanned: 1,
+      added: 0,
+      updated: 0,
+      unchanged: 1,
+      missing: 0,
+      bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
+      databasePath: defaultLibraryPaths.databasePath,
+      comics: [historyComic],
     });
-
-    await user.click(screen.getByRole("button", { name: "一键更新收藏" }));
-
-    await waitFor(() => {
-      expect(ensureMangaConRunningMock).toHaveBeenCalledTimes(2);
-      expect(queueMangaConUpdatesMock).toHaveBeenCalledWith({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-        companionDatabasePath: approvedDefaultPaths.databasePath,
-        maxUpdates: 500,
-      });
-    });
-    expect(
-      ensureMangaConRunningMock.mock.invocationCallOrder[1],
-    ).toBeLessThan(queueMangaConUpdatesMock.mock.invocationCallOrder[0]);
-    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
-    expect(
-      screen.getAllByText(
-        "已加入漫画控下载队列 33 话，跳过已有任务 1 话，清理更新标记 34 处",
-      ).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("继续未完成下载只唤醒漫画控已有任务而不扫描书架", async () => {
-    const user = userEvent.setup();
-    resumeMangaConUnfinishedTasksMock.mockResolvedValue({
-      backupPath:
-        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-3",
-      totalUnfinished: 500,
-      resumeConfigured: true,
-      launched: true,
-      launchPid: 987,
-      confirm: {
-        found: false,
-        clicked: false,
-        dialogTitle: "continue_last_session_tasks",
+    scanLocalChaptersMock.mockResolvedValue([
+      {
+        id: "local:a::第01话",
+        comicId: "local:a",
+        title: "第01话",
+        path: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+        ordinal: 1,
+        pageCount: 2,
+        readProgressPage: 1,
+        specialKind: "regular",
       },
-    });
+    ]);
+    listChapterPagesMock.mockResolvedValue([
+      "E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg",
+      "E:\\书架\\婚纱之中待到花火散去\\第01话\\002.jpg",
+    ]);
 
     render(<App />);
-
-    await user.click(screen.getByRole("button", { name: "继续未完成下载" }));
-
-    await waitFor(() => {
-      expect(resumeMangaConUnfinishedTasksMock).toHaveBeenCalledWith({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-      });
-    });
-    expect(queueMangaConUpdatesMock).not.toHaveBeenCalled();
-    expect(syncBookshelfMatchesMock).not.toHaveBeenCalled();
-    expect(
-      screen.getAllByText("已唤醒漫画控继续 500 个未完成下载任务").length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("刷新任务状态会读取漫画控数据库并更新仪表盘", async () => {
-    const user = userEvent.setup();
-    getMangaConTaskStatusMock.mockResolvedValue({
-      totalTasks: 20,
-      activeTasks: 7,
-      failedTasks: 2,
-      finishedTasks: 11,
-      totalErrors: 5,
-      continueLastSessionTasks: true,
-      continueLastSessionTasksValue: "1",
-    });
-
-    render(<App />);
-
-    await user.click(screen.getByRole("button", { name: "刷新任务状态" }));
-
-    await waitFor(() => {
-      expect(getMangaConTaskStatusMock).toHaveBeenCalledWith({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-      });
-    });
-    expect(screen.getByText("未完成")).toBeInTheDocument();
-    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
-    expect(screen.getByText("启用")).toBeInTheDocument();
-  });
-
-  it("从仪表盘手动修复失败图片会重新加入漫画控修复队列", async () => {
-    const user = userEvent.setup();
-    repairMangaConFailedTasksMock.mockResolvedValue({
-      backupPath:
-        "C:\\Users\\Administrator\\AppData\\Local\\MangaCon3\\MangaCon.dat.companion-backup-2",
-      totalFailed: 2,
-      requeued: 2,
-      launched: true,
-      launchPid: 789,
-      confirm: { found: true, clicked: true, dialogTitle: "漫画控" },
-      tasks: [],
-    });
-
-    render(<App />);
-
-    await user.click(screen.getByRole("button", { name: "修复失败图片" }));
-
-    await waitFor(() => {
-      expect(repairMangaConFailedTasksMock).toHaveBeenCalledWith({
-        mangaConDatabasePath: approvedDefaultPaths.mangaConDatabase,
-        executablePath: approvedDefaultPaths.mangaConExecutable,
-        maxTasks: 200,
-      });
-    });
-    expect(
-      screen.getAllByText("已将 2 个失败任务重新加入漫画控修复队列").length,
-    ).toBeGreaterThan(0);
+    await screen.findAllByText("婚纱之中待到花火散去");
+    expect(screen.queryByRole("button", { name: "历史" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /继续$/ }));
+    expect(await screen.findByAltText("第01话 第 2 页")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回书库" }));
+    expect(screen.getByRole("heading", { name: "书库" })).toBeInTheDocument();
   });
 });
