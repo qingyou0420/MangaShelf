@@ -29,7 +29,7 @@ impl LibraryDatabase {
     }
 
     pub fn migrate(&self) -> Result<()> {
-        const SCHEMA_VERSION: i32 = 4;
+        const SCHEMA_VERSION: i32 = 5;
         let version: i32 = self
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -98,10 +98,75 @@ impl LibraryDatabase {
         self.ensure_comics_column("shelf_update_note", "TEXT")?;
         self.connection.execute_batch(
             r#"
+            CREATE TABLE IF NOT EXISTS library_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_chapters_comic_id
             ON chapters(comic_id, ordinal);
-            PRAGMA user_version = 4;
             "#,
+        )?;
+        if version < 5 {
+            self.seed_baseline_for_existing_library()?;
+        }
+        self.connection.execute_batch("PRAGMA user_version = 5;")?;
+        Ok(())
+    }
+
+    pub fn baseline_completed_at(&self) -> Result<Option<String>> {
+        self.meta_value("baseline_completed_at")
+    }
+
+    pub fn set_baseline_completed_at(&self, stamp: &str) -> Result<()> {
+        self.set_meta_value("baseline_completed_at", stamp)
+    }
+
+    pub fn clear_shelf_updates(&self) -> Result<usize> {
+        let changed = self.connection.execute(
+            r#"
+            UPDATE comics
+            SET shelf_updated_at = NULL, shelf_update_note = NULL
+            WHERE shelf_updated_at IS NOT NULL OR shelf_update_note IS NOT NULL
+            "#,
+            [],
+        )?;
+        Ok(changed)
+    }
+
+    fn seed_baseline_for_existing_library(&self) -> Result<()> {
+        if self.baseline_completed_at()?.is_some() {
+            return Ok(());
+        }
+        let count: i64 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM comics", [], |row| row.get(0))?;
+        if count <= 0 {
+            return Ok(());
+        }
+        let stamp = self.now_stamp();
+        self.set_baseline_completed_at(&stamp)?;
+        self.clear_shelf_updates()?;
+        Ok(())
+    }
+
+    fn meta_value(&self, key: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT value FROM library_meta WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn set_meta_value(&self, key: &str, value: &str) -> Result<()> {
+        self.connection.execute(
+            r#"
+            INSERT INTO library_meta (key, value) VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            params![key, value],
         )?;
         Ok(())
     }
@@ -927,5 +992,40 @@ mod tests {
         assert_eq!(db.count_rows("chapters").expect("count"), 1);
         let stored = db.list_chapters_for_comic(&comic.id).expect("list");
         assert_eq!(stored[0].read_progress_page, 3);
+    }
+
+    #[test]
+    fn migrating_existing_library_establishes_baseline_and_clears_first_import_stamps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db = LibraryDatabase::open(temp.path().join("state.sqlite")).expect("db open");
+        db.migrate().expect("first migrate");
+
+        let mut flooded = sample_comic();
+        flooded.shelf_updated_at = Some("2026-08-21 12:00:00".into());
+        flooded.shelf_update_note = Some("新书".into());
+        db.upsert_comic(&flooded).expect("seed flood");
+        db.connection
+            .execute_batch(
+                r#"
+                DROP TABLE IF EXISTS library_meta;
+                PRAGMA user_version = 4;
+                "#,
+            )
+            .expect("simulate v4");
+
+        db.migrate().expect("upgrade");
+        assert!(db.baseline_completed_at().expect("baseline").is_some());
+        let comics = db.list_comics().expect("list");
+        assert_eq!(comics.len(), 1);
+        assert!(comics[0].shelf_updated_at.is_none());
+        assert!(comics[0].shelf_update_note.is_none());
+    }
+
+    #[test]
+    fn empty_library_does_not_seed_baseline_on_migrate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db = LibraryDatabase::open(temp.path().join("state.sqlite")).expect("db open");
+        db.migrate().expect("migrate");
+        assert!(db.baseline_completed_at().expect("baseline").is_none());
     }
 }
