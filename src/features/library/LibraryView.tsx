@@ -39,6 +39,7 @@ interface LibraryViewProps {
   scanProgress?: ScanProgress;
   failedItems?: Array<{ title: string; error: string }>;
   bookshelfMissing?: boolean;
+  baselineCompleted?: boolean;
 }
 
 const filters: Array<{ id: LibraryFilter; label: string }> = [
@@ -69,6 +70,7 @@ export function LibraryView({
   scanProgress,
   failedItems = [],
   bookshelfMissing = false,
+  baselineCompleted = false,
 }: LibraryViewProps) {
   const stored = loadLibraryViewPrefs();
   const [activeFilter, setActiveFilter] = useState<LibraryFilter>(stored.filter);
@@ -228,14 +230,20 @@ export function LibraryView({
             type="button"
             onClick={onScanLibrary}
             disabled={isScanning}
-            title="扫描本地书架，建立或更新书库索引"
+            title={
+              baselineCompleted
+                ? "扫描新出现的书文件夹和话文件夹。改文件、刷新封面不会出现在最近更新。"
+                : "一次性导入现有书库。已有的书和话只建立索引，不会标成最近更新。"
+            }
           >
             <FolderOpen size={16} aria-hidden="true" />
             {isScanning
               ? scanProgress && scanProgress.total > 0
                 ? `扫描中 ${scanProgress.scanned}/${scanProgress.total}`
                 : "扫描中…"
-              : "扫描书架"}
+              : baselineCompleted
+                ? "扫描书架"
+                : "导入现有书库"}
           </button>
         </div>
       </div>
@@ -243,6 +251,12 @@ export function LibraryView({
       {isScanning && scanProgress?.currentTitle && (
         <p className="scan-progress-line muted">
           正在处理 {scanProgress.currentTitle}
+        </p>
+      )}
+
+      {!baselineCompleted && !bookshelfMissing && !isScanning && (
+        <p className="scan-progress-line muted">
+          首次导入会索引全部已有漫画，不会把它们标成「最近更新」。之后只有新书文件夹和新话文件夹会显示在那里。
         </p>
       )}
 
@@ -264,7 +278,7 @@ export function LibraryView({
         <section className="updates-strip" aria-label="最近更新">
           <div className="updates-strip-head">
             <strong>最近更新</strong>
-            <span className="muted">书架上的新书和新话</span>
+            <span className="muted">导入之后新增的书和话</span>
           </div>
           <div className="updates-strip-list">
             {recentUpdates.map((comic) => (
@@ -497,7 +511,13 @@ export function LibraryView({
               {emptyTitle(activeFilter, query, comics.length, bookshelfMissing)}
             </strong>
             <p>
-              {emptyHint(activeFilter, query, comics.length, bookshelfMissing)}
+              {emptyHint(
+                activeFilter,
+                query,
+                comics.length,
+                bookshelfMissing,
+                baselineCompleted,
+              )}
             </p>
           </div>
           {comics.length === 0 && onPickBookshelf && (
@@ -555,14 +575,17 @@ function emptyHint(
   query: string,
   total: number,
   bookshelfMissing = false,
+  baselineCompleted = false,
 ): string {
   if (query.trim()) {
     return "试试清空搜索，或换个关键词。";
   }
   if (total === 0) {
     return bookshelfMissing
-      ? "默认路径不存在。选择你的漫画文件夹后再扫描。不会改动或删除文件。"
-      : "选择本地书架文件夹，然后点右上角「扫描书架」。不会改动或删除你的漫画文件。";
+      ? "默认路径不存在。选择你的漫画文件夹后再导入。不会改动或删除文件。"
+      : baselineCompleted
+        ? "选择本地书架文件夹，然后点右上角「扫描书架」。不会改动或删除你的漫画文件。"
+        : "选择本地书架文件夹，然后点右上角「导入现有书库」。首次导入只建立索引，不会把已有漫画标成最近更新。";
   }
   switch (filter) {
     case "favorited":

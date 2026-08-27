@@ -24,6 +24,11 @@ enum LocalScanOutcome {
     SkippedEmpty,
 }
 
+enum ShelfUpdateMode {
+    Baseline,
+    TrackNewFolders { is_new_book: bool },
+}
+
 pub fn load_library(
     bookshelf_root: impl AsRef<Path>,
     database_path: Option<impl AsRef<Path>>,
@@ -38,6 +43,7 @@ pub fn load_library(
             database_path: path_display(&database_path),
             bookshelf_root: path_display(&bookshelf_root),
             comics: Vec::new(),
+            baseline_completed: false,
         });
     }
     let db = LibraryDatabase::open(&database_path)?;
@@ -46,6 +52,7 @@ pub fn load_library(
         database_path: path_display(&database_path),
         bookshelf_root: path_display(&bookshelf_root),
         comics: db.list_comics()?,
+        baseline_completed: db.baseline_completed_at()?.is_some(),
     })
 }
 
@@ -74,6 +81,14 @@ pub fn scan_library_with_progress(
     let db = LibraryDatabase::open(&database_path)?;
     db.migrate()?;
 
+    let already_baselined = db.baseline_completed_at()?.is_some();
+    let shelf_mode = |is_new_book: bool| {
+        if already_baselined {
+            ShelfUpdateMode::TrackNewFolders { is_new_book }
+        } else {
+            ShelfUpdateMode::Baseline
+        }
+    };
     let existing = db.list_comics()?;
     let mut locals = scan_bookshelf(&bookshelf_root)?;
     for extra in &extra_owned {
@@ -103,7 +118,15 @@ pub fn scan_library_with_progress(
             let Some(existing_index) = find_existing_comic(&existing, local) else {
                 let mut comic =
                     Comic::from_local_directory(local.title.clone(), local.directory.clone());
-                apply_local_scan(&db, &mut comic, local, None, &bookshelf_root, &extra_owned)?;
+                apply_local_scan(
+                    &db,
+                    &mut comic,
+                    local,
+                    None,
+                    &bookshelf_root,
+                    &extra_owned,
+                    shelf_mode(true),
+                )?;
                 return Ok((true, LocalScanOutcome::Changed));
             };
 
@@ -117,6 +140,7 @@ pub fn scan_library_with_progress(
                 previous_fingerprint.as_deref(),
                 &bookshelf_root,
                 &extra_owned,
+                shelf_mode(false),
             )?;
             Ok((false, outcome))
         })();
@@ -167,6 +191,12 @@ pub fn scan_library_with_progress(
         current_title: String::new(),
     });
 
+    let established_baseline = !cancelled && !already_baselined;
+    if established_baseline {
+        db.set_baseline_completed_at(&db.now_stamp())?;
+        db.clear_shelf_updates()?;
+    }
+
     Ok(ScanLibraryResult {
         scanned: locals.len(),
         added,
@@ -178,6 +208,8 @@ pub fn scan_library_with_progress(
         database_path: path_display(&database_path),
         bookshelf_root: path_display(&bookshelf_root),
         comics: db.list_comics()?,
+        baseline_completed: already_baselined || established_baseline,
+        established_baseline,
     })
 }
 
@@ -382,9 +414,9 @@ fn apply_local_scan(
     previous_fingerprint: Option<&str>,
     bookshelf_root: &Path,
     extra_roots: &[PathBuf],
+    shelf_mode: ShelfUpdateMode,
 ) -> Result<LocalScanOutcome> {
     let previous_chapters = comic.chapter_count;
-    let was_new = previous_fingerprint.is_none() && previous_chapters == 0;
     let cheap = if local.cheap_signature.is_empty() {
         cheap_signature(&local.directory)?
     } else {
@@ -444,21 +476,15 @@ fn apply_local_scan(
             .map(|source| cover_or_source(&cover_root, &comic.id, source));
     }
     comic.scan_status = ScanStatus::Matched;
-    let added_chapters = comic.chapter_count.saturating_sub(previous_chapters);
-    if was_new {
-        comic.shelf_updated_at = Some(db.now_stamp());
-        comic.shelf_update_note = Some("新书".to_string());
-    } else if added_chapters > 0 {
-        let latest = comic.latest_chapter_title.clone().unwrap_or_default();
-        comic.shelf_updated_at = Some(db.now_stamp());
-        comic.shelf_update_note = Some(if latest.is_empty() {
-            format!("新增 {added_chapters} 话")
-        } else {
-            format!("更新至{latest}")
-        });
-    } else {
-        comic.shelf_updated_at = Some(db.now_stamp());
-        comic.shelf_update_note = Some("有新内容".to_string());
+    if let ShelfUpdateMode::TrackNewFolders { is_new_book } = shelf_mode {
+        apply_shelf_update_note(
+            comic,
+            &stored,
+            &chapters,
+            previous_chapters,
+            is_new_book,
+            &db.now_stamp(),
+        );
     }
     db.commit_scanned_comic(comic, Some(&chapters), Some(&fingerprint))?;
     db.update_cheap_signature(&comic.id, Some(&cheap))?;
@@ -503,6 +529,43 @@ pub fn merge_chapter_progress(chapters: &mut [Chapter], stored: &[Chapter]) {
             chapter.read_progress_page = previous.read_progress_page;
         }
     }
+}
+
+fn apply_shelf_update_note(
+    comic: &mut Comic,
+    stored: &[Chapter],
+    chapters: &[Chapter],
+    previous_chapters: usize,
+    is_new_book: bool,
+    stamp: &str,
+) {
+    if is_new_book {
+        comic.shelf_updated_at = Some(stamp.to_string());
+        comic.shelf_update_note = Some("新书".to_string());
+        return;
+    }
+    let new_folders = count_new_chapter_folders(stored, chapters);
+    let can_detect_new = !stored.is_empty() || previous_chapters > 0;
+    if can_detect_new && new_folders > 0 {
+        let latest = comic.latest_chapter_title.clone().unwrap_or_default();
+        comic.shelf_updated_at = Some(stamp.to_string());
+        comic.shelf_update_note = Some(if latest.is_empty() {
+            format!("新增 {new_folders} 话")
+        } else {
+            format!("更新至{latest}")
+        });
+    }
+}
+
+fn count_new_chapter_folders(stored: &[Chapter], chapters: &[Chapter]) -> usize {
+    chapters
+        .iter()
+        .filter(|chapter| {
+            !stored.iter().any(|previous| {
+                previous.id == chapter.id || same_path(&previous.path, &chapter.path)
+            })
+        })
+        .count()
 }
 
 fn latest_chapter_title(chapters: &[Chapter]) -> Option<String> {
@@ -802,7 +865,38 @@ mod tests {
     }
 
     #[test]
-    fn scan_records_new_book_and_new_chapter_notes() {
+    fn baseline_scan_imports_without_marking_recent_updates() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("bookshelf");
+        for name in ["已有甲", "已有乙"] {
+            let chapter = root.join(name).join("第01话");
+            fs::create_dir_all(&chapter).expect("chapter");
+            fs::write(chapter.join("001.jpg"), b"image").expect("page");
+        }
+        let db_path = temp.path().join("library.sqlite");
+
+        let first = scan_library(&root, Some(&db_path)).expect("first");
+        assert_eq!(first.added, 2);
+        assert!(first.established_baseline);
+        assert!(first.baseline_completed);
+        assert!(
+            first
+                .comics
+                .iter()
+                .all(|comic| comic.shelf_updated_at.is_none() && comic.shelf_update_note.is_none()),
+            "baseline import must not flood 最近更新"
+        );
+
+        let unchanged = scan_library(&root, Some(&db_path)).expect("second");
+        assert_eq!(unchanged.added, 0);
+        assert_eq!(unchanged.updated, 0);
+        assert!(!unchanged.established_baseline);
+        assert!(unchanged.baseline_completed);
+        assert!(unchanged.comics.iter().all(|comic| comic.shelf_updated_at.is_none()));
+    }
+
+    #[test]
+    fn after_baseline_only_new_book_and_chapter_folders_mark_updates() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("bookshelf");
         let chapter = root.join("连载书").join("第01话");
@@ -810,20 +904,105 @@ mod tests {
         fs::write(chapter.join("001.jpg"), b"image").expect("page");
         let db_path = temp.path().join("library.sqlite");
 
-        let first = scan_library(&root, Some(&db_path)).expect("first");
-        assert_eq!(first.comics[0].shelf_update_note.as_deref(), Some("新书"));
-        assert!(first.comics[0].shelf_updated_at.is_some());
+        let first = scan_library(&root, Some(&db_path)).expect("baseline");
+        assert!(first.established_baseline);
+        assert!(first.comics[0].shelf_update_note.is_none());
 
         let second_chapter = root.join("连载书").join("第02话");
         fs::create_dir_all(&second_chapter).expect("chapter 2");
         fs::write(second_chapter.join("001.jpg"), b"image").expect("page");
-        let again = scan_library(&root, Some(&db_path)).expect("rescan");
+        let again = scan_library(&root, Some(&db_path)).expect("new chapter");
         assert_eq!(again.updated, 1);
         let note = again.comics[0].shelf_update_note.clone().unwrap_or_default();
         assert!(
             note.contains("更新至") || note.contains("新增"),
             "{note}"
         );
+        assert!(again.comics[0].shelf_updated_at.is_some());
+
+        let new_book = root.join("新书文件夹").join("第01话");
+        fs::create_dir_all(&new_book).expect("new book");
+        fs::write(new_book.join("001.jpg"), b"image").expect("page");
+        let with_new_book = scan_library(&root, Some(&db_path)).expect("new book");
+        let fresh = with_new_book
+            .comics
+            .iter()
+            .find(|comic| comic.name == "新书文件夹")
+            .expect("new title");
+        assert_eq!(fresh.shelf_update_note.as_deref(), Some("新书"));
+        assert!(fresh.shelf_updated_at.is_some());
+        let old = with_new_book
+            .comics
+            .iter()
+            .find(|comic| comic.name == "连载书")
+            .expect("old title");
+        assert_eq!(old.shelf_update_note.as_deref(), Some(note.as_str()));
+    }
+
+    #[test]
+    fn extra_pages_and_file_writes_do_not_mark_recent_updates() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("bookshelf");
+        let chapter = root.join("旧书").join("第01话");
+        fs::create_dir_all(&chapter).expect("chapter");
+        fs::write(chapter.join("001.jpg"), b"image").expect("page");
+        let db_path = temp.path().join("library.sqlite");
+        scan_library(&root, Some(&db_path)).expect("baseline");
+
+        fs::write(chapter.join("002.jpg"), b"image").expect("new page");
+        let after_pages = scan_library(&root, Some(&db_path)).expect("pages");
+        assert_eq!(after_pages.comics[0].image_count, 2);
+        assert!(after_pages.comics[0].shelf_updated_at.is_none());
+        assert!(after_pages.comics[0].shelf_update_note.is_none());
+
+        fs::write(chapter.join("001.jpg"), b"image-replaced").expect("touch");
+        let after_touch = scan_library(&root, Some(&db_path)).expect("touch");
+        assert!(after_touch.comics[0].shelf_updated_at.is_none());
+        assert!(after_touch.comics[0].shelf_update_note.is_none());
+    }
+
+    #[test]
+    fn cancelled_first_scan_does_not_establish_baseline() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("bookshelf");
+        for name in ["甲", "乙", "丙"] {
+            let chapter = root.join(name).join("第01话");
+            fs::create_dir_all(&chapter).expect("chapter");
+            fs::write(chapter.join("001.jpg"), b"image").expect("page");
+        }
+        let db_path = temp.path().join("library.sqlite");
+        let result =
+            scan_library_with_progress(&root, Some(&db_path), &[] as &[&Path], |progress| {
+                progress.scanned < 1
+            })
+            .expect("scan");
+        assert_eq!(result.added, 1);
+        assert!(!result.established_baseline);
+        assert!(!result.baseline_completed);
+        assert!(result.comics.iter().all(|comic| comic.shelf_updated_at.is_none()));
+
+        let finished = scan_library(&root, Some(&db_path)).expect("finish baseline");
+        assert!(finished.established_baseline);
+        assert!(finished.baseline_completed);
+        assert!(finished.comics.iter().all(|comic| comic.shelf_updated_at.is_none()));
+    }
+
+    #[test]
+    fn rescan_after_baseline_keeps_page_changes_off_the_update_strip() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("bookshelf");
+        let chapter = root.join("变页书").join("第01话");
+        fs::create_dir_all(&chapter).expect("chapter");
+        fs::write(chapter.join("001.jpg"), b"image").expect("page");
+        let db_path = temp.path().join("library.sqlite");
+        let first = scan_library(&root, Some(&db_path)).expect("first");
+        assert!(first.comics[0].shelf_updated_at.is_none());
+
+        fs::write(chapter.join("002.jpg"), b"image").expect("new page");
+        let again = scan_library(&root, Some(&db_path)).expect("rescan");
+        assert_eq!(again.comics[0].image_count, 2);
+        assert_eq!(again.updated, 1);
+        assert!(again.comics[0].shelf_updated_at.is_none());
     }
 
     #[test]

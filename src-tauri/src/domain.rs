@@ -292,6 +292,10 @@ pub struct ScanLibraryResult {
     pub database_path: String,
     pub bookshelf_root: String,
     pub comics: Vec<Comic>,
+    #[serde(default)]
+    pub baseline_completed: bool,
+    #[serde(default)]
+    pub established_baseline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -330,6 +334,8 @@ pub struct LoadLibraryResult {
     pub database_path: String,
     pub bookshelf_root: String,
     pub comics: Vec<Comic>,
+    #[serde(default)]
+    pub baseline_completed: bool,
 }
 
 #[cfg(test)]

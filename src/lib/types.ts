@@ -51,6 +51,7 @@ export interface LoadLibraryResult {
   databasePath: string;
   bookshelfRoot: string;
   comics: LibraryComic[];
+  baselineCompleted?: boolean;
 }
 
 export interface ScanLibraryResult {
@@ -64,6 +65,8 @@ export interface ScanLibraryResult {
   databasePath: string;
   bookshelfRoot: string;
   comics: LibraryComic[];
+  baselineCompleted?: boolean;
+  establishedBaseline?: boolean;
 }
 
 export interface ScanProgress {

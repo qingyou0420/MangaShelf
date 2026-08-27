@@ -46,13 +46,19 @@ describe("LibraryView toolbar", () => {
   it("scans local bookshelf and filters favorites", async () => {
     const user = userEvent.setup();
     const onScanLibrary = vi.fn();
-    render(<LibraryView comics={comics} onScanLibrary={onScanLibrary} />);
+    render(
+      <LibraryView
+        comics={comics}
+        onScanLibrary={onScanLibrary}
+        baselineCompleted
+      />,
+    );
 
     expect(
       document.querySelector(".library-tile.selected"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "扫描书架" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "导入" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "导入现有书库" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "有更新" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "扫描书架" }));
@@ -101,6 +107,16 @@ describe("LibraryView toolbar", () => {
     );
     expect(screen.getByRole("region", { name: "最近更新" })).toBeInTheDocument();
     expect(screen.getByText("新书")).toBeInTheDocument();
+    expect(screen.getByText("导入之后新增的书和话")).toBeInTheDocument();
+  });
+
+  it("offers a one-time import before the library baseline exists", () => {
+    render(
+      <LibraryView comics={[]} onScanLibrary={() => undefined} />,
+    );
+    expect(screen.getByRole("button", { name: "导入现有书库" })).toBeInTheDocument();
+    expect(screen.getByText(/不会把已有漫画标成最近更新/)).toBeInTheDocument();
+    expect(screen.getByText(/首次导入会索引全部已有漫画/)).toBeInTheDocument();
   });
 
   it("filters by tag when a tag label is clicked", async () => {
@@ -136,7 +152,7 @@ describe("LibraryView toolbar", () => {
   it("explains empty library without mentioning external platforms", () => {
     render(<LibraryView comics={[]} />);
     expect(screen.getByText("书库还是空的")).toBeInTheDocument();
-    expect(screen.getByText(/不会改动或删除你的漫画文件/)).toBeInTheDocument();
+    expect(screen.getByText(/不会把已有漫画标成最近更新/)).toBeInTheDocument();
     expect(screen.queryByText(/漫画控/)).not.toBeInTheDocument();
   });
 });

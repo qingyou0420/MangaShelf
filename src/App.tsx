@@ -45,6 +45,7 @@ function App() {
     scanProgress,
     failedItems,
     bookshelfMissing,
+    baselineCompleted,
     readerService,
     handleScanLibrary,
     handleCancelScan,
@@ -243,6 +244,7 @@ function App() {
                 scanProgress={scanProgress}
                 failedItems={failedItems}
                 bookshelfMissing={bookshelfMissing}
+                baselineCompleted={baselineCompleted}
               />
             )}
             {activeSection === "settings" && (

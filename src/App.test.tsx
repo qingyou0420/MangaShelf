@@ -147,6 +147,7 @@ describe("App", () => {
       bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
       databasePath: defaultLibraryPaths.databasePath,
       comics: loadedComics,
+      baselineCompleted: true,
     });
     scanLibraryMock.mockResolvedValue({
       scanned: 1,
@@ -157,6 +158,7 @@ describe("App", () => {
       bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
       databasePath: defaultLibraryPaths.databasePath,
       comics: loadedComics,
+      baselineCompleted: true,
     });
 
     render(<App />);
@@ -218,6 +220,8 @@ describe("App", () => {
       bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
       databasePath: defaultLibraryPaths.databasePath,
       comics: loadedComics,
+      baselineCompleted: true,
+      establishedBaseline: true,
     });
     scanLocalChaptersMock.mockResolvedValue([
       {
@@ -244,7 +248,9 @@ describe("App", () => {
 
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "扫描书架" }));
+    await user.click(
+      await screen.findByRole("button", { name: /导入现有书库|扫描书架/ }),
+    );
     await waitFor(() => {
       expect(scanLibraryMock).toHaveBeenCalledWith({
         ...defaultLibraryPaths,
@@ -252,7 +258,7 @@ describe("App", () => {
       });
     });
     expect(
-      screen.getAllByText(/扫描完成：新增 1，有变化 0，未变 0，未匹配 0/).length,
+      screen.getAllByText(/已导入现有书库 1 部，已作为基准/).length,
     ).toBeGreaterThan(0);
 
     await user.click(
@@ -280,6 +286,7 @@ describe("App", () => {
       bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
       databasePath: defaultLibraryPaths.databasePath,
       comics: [historyComic],
+      baselineCompleted: true,
     });
     scanLibraryMock.mockResolvedValue({
       scanned: 1,
@@ -290,6 +297,7 @@ describe("App", () => {
       bookshelfRoot: defaultLibraryPaths.bookshelfRoot,
       databasePath: defaultLibraryPaths.databasePath,
       comics: [historyComic],
+      baselineCompleted: true,
     });
     scanLocalChaptersMock.mockResolvedValue([
       {
