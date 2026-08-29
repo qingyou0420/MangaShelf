@@ -547,13 +547,8 @@ fn apply_shelf_update_note(
     let new_folders = count_new_chapter_folders(stored, chapters);
     let can_detect_new = !stored.is_empty() || previous_chapters > 0;
     if can_detect_new && new_folders > 0 {
-        let latest = comic.latest_chapter_title.clone().unwrap_or_default();
         comic.shelf_updated_at = Some(stamp.to_string());
-        comic.shelf_update_note = Some(if latest.is_empty() {
-            format!("新增 {new_folders} 话")
-        } else {
-            format!("更新至{latest}")
-        });
+        comic.shelf_update_note = Some(format!("更新了{new_folders}话"));
     }
 }
 
@@ -914,10 +909,7 @@ mod tests {
         let again = scan_library(&root, Some(&db_path)).expect("new chapter");
         assert_eq!(again.updated, 1);
         let note = again.comics[0].shelf_update_note.clone().unwrap_or_default();
-        assert!(
-            note.contains("更新至") || note.contains("新增"),
-            "{note}"
-        );
+        assert_eq!(note, "更新了1话");
         assert!(again.comics[0].shelf_updated_at.is_some());
 
         let new_book = root.join("新书文件夹").join("第01话");

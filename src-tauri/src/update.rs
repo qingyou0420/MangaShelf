@@ -13,7 +13,7 @@ use std::{
 pub const GITHUB_OWNER: &str = "qingyou0420";
 pub const GITHUB_REPO: &str = "MangaShelf";
 const GITHUB_API: &str = "https://api.github.com/repos/qingyou0420/MangaShelf/releases/latest";
-const USER_AGENT: &str = "MangaShelf/2.5.0";
+const USER_AGENT: &str = concat!("MangaShelf/", env!("CARGO_PKG_VERSION"));
 
 #[cfg(not(windows))]
 use std::process::Command;

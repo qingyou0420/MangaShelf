@@ -298,8 +298,8 @@ export function useLibrarySession(showToast: (message: string) => void) {
         ? `扫描已停止：新增 ${result.added}，有变化 ${result.updated}`
         : result.establishedBaseline
           ? result.added > 0
-            ? `已导入现有书库 ${result.added} 部，已作为基准。它们不会出现在最近更新里。`
-            : "已建立书库基准。之后新增的书和话会出现在最近更新。"
+            ? `已导入现有书库 ${result.added} 部，已作为基准。它们不会标成更新。`
+            : "已建立书库基准。之后新增的书和话会排在前面，并在封面标出更新话数。"
           : quiet && changed
             ? `书架有更新：新书 ${result.added}，新内容 ${result.updated}${failed}${failedHint}`
             : `扫描完成：新增 ${result.added}，有变化 ${result.updated}，未变 ${result.unchanged ?? 0}，未匹配 ${result.missing}${failed}${failedHint}`;

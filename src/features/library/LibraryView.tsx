@@ -50,9 +50,9 @@ const filters: Array<{ id: LibraryFilter; label: string }> = [
 ];
 
 const sorts: Array<{ id: LibrarySort; label: string }> = [
+  { id: "updated", label: "最近更新" },
   { id: "name", label: "名称" },
   { id: "recent", label: "最近阅读" },
-  { id: "updated", label: "最近更新" },
   { id: "chapters", label: "章节" },
 ];
 
@@ -132,18 +132,6 @@ export function LibraryView({
     });
     return sortDesc ? sorted.reverse() : sorted;
   }, [activeFilter, comics, query, sortBy, sortDesc]);
-
-  const recentUpdates = useMemo(() => {
-    return comics
-      .filter((comic) => comic.shelfUpdatedAt && comic.localPath)
-      .slice()
-      .sort(
-        (a, b) =>
-          (b.shelfUpdatedAt ?? "").localeCompare(a.shelfUpdatedAt ?? "") ||
-          a.name.localeCompare(b.name, "zh"),
-      )
-      .slice(0, 24);
-  }, [comics]);
 
   useEffect(() => {
     saveLibraryViewPrefs({
@@ -232,8 +220,8 @@ export function LibraryView({
             disabled={isScanning}
             title={
               baselineCompleted
-                ? "扫描新出现的书文件夹和话文件夹。改文件、刷新封面不会出现在最近更新。"
-                : "一次性导入现有书库。已有的书和话只建立索引，不会标成最近更新。"
+                ? "扫描新出现的书文件夹和话文件夹。改文件、刷新封面不会标成更新。"
+                : "一次性导入现有书库。已有的书和话只建立索引，不会在封面上标更新。"
             }
           >
             <FolderOpen size={16} aria-hidden="true" />
@@ -256,7 +244,7 @@ export function LibraryView({
 
       {!baselineCompleted && !bookshelfMissing && !isScanning && (
         <p className="scan-progress-line muted">
-          首次导入会索引全部已有漫画，不会把它们标成「最近更新」。之后只有新书文件夹和新话文件夹会显示在那里。
+          首次导入会索引全部已有漫画，不会把它们标成更新。之后新书和新话会排在前面，并在封面标出更新了几话。
         </p>
       )}
 
@@ -272,37 +260,6 @@ export function LibraryView({
             ))}
           </ul>
         </details>
-      )}
-
-      {recentUpdates.length > 0 && (
-        <section className="updates-strip" aria-label="最近更新">
-          <div className="updates-strip-head">
-            <strong>最近更新</strong>
-            <span className="muted">导入之后新增的书和话</span>
-          </div>
-          <div className="updates-strip-list">
-            {recentUpdates.map((comic) => (
-              <button
-                type="button"
-                className="updates-card"
-                key={`update-${comic.id}`}
-                onClick={() =>
-                  comic.localPath && onOpenSeries
-                    ? onOpenSeries(comic)
-                    : onReadComic?.(comic)
-                }
-              >
-                <BookCover comic={comic} compact />
-                <span className="updates-card-body">
-                  <strong title={comic.name}>{comic.name}</strong>
-                  <span className="muted">
-                    {comic.shelfUpdateNote || "有新内容"}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
       )}
 
       {continueComic && onReadComic && (
@@ -392,6 +349,7 @@ export function LibraryView({
           const canOpen = Boolean(comic.localPath && onOpenSeries);
           const progress = coverProgress(comic);
           const selected = index === selectedIndex;
+          const updateBadge = coverUpdateBadge(comic);
           return (
             <article
               className={[
@@ -420,6 +378,9 @@ export function LibraryView({
               >
                 <div className="cover-frame">
                   <BookCover comic={comic} />
+                  {updateBadge && (
+                    <span className="cover-update-badge">{updateBadge}</span>
+                  )}
                   {progress > 0 && (
                     <span
                       className="cover-progress"
@@ -585,7 +546,7 @@ function emptyHint(
       ? "默认路径不存在。选择你的漫画文件夹后再导入。不会改动或删除文件。"
       : baselineCompleted
         ? "选择本地书架文件夹，然后点右上角「扫描书架」。不会改动或删除你的漫画文件。"
-        : "选择本地书架文件夹，然后点右上角「导入现有书库」。首次导入只建立索引，不会把已有漫画标成最近更新。";
+        : "选择本地书架文件夹，然后点右上角「导入现有书库」。首次导入只建立索引，不会把已有漫画标成更新。";
   }
   switch (filter) {
     case "favorited":
@@ -622,6 +583,24 @@ function BookCover({
       <BookMarked size={compact ? 20 : 28} />
     </div>
   );
+}
+
+function coverUpdateBadge(comic: LibraryComic): string | undefined {
+  if (!comic.shelfUpdatedAt || !comic.localPath) {
+    return undefined;
+  }
+  const note = comic.shelfUpdateNote?.trim();
+  if (!note) {
+    return "有更新";
+  }
+  if (note === "新书") {
+    return "新书";
+  }
+  const count = note.match(/^(?:新增|更新了)\s*(\d+)\s*话$/);
+  if (count) {
+    return `更新了${count[1]}话`;
+  }
+  return note;
 }
 
 function statusLabel(comic: LibraryComic) {

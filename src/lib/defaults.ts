@@ -87,7 +87,7 @@ export function saveStoredPaths(paths: LibraryPaths): LibraryPaths {
 }
 
 export const READER_DEFAULTS_KEY = "manga-library.reader-defaults";
-export const LIBRARY_PREFS_KEY = "manga-library.library-prefs";
+export const LIBRARY_PREFS_KEY = "manga-library.library-prefs.v2";
 
 export const defaultReaderDefaults: ReaderDefaults = {
   readingDirection: "ltr",
@@ -126,11 +126,18 @@ export function saveReaderDefaults(defaults: ReaderDefaults): ReaderDefaults {
   return defaults;
 }
 
+export const defaultLibraryViewPrefs: LibraryViewPrefs = {
+  filter: "all",
+  sort: "updated",
+  sortDesc: false,
+  query: "",
+};
+
 export function loadLibraryViewPrefs(): LibraryViewPrefs {
   try {
     const raw = window.localStorage.getItem(LIBRARY_PREFS_KEY);
     if (!raw) {
-      return { filter: "all", sort: "name", sortDesc: false, query: "" };
+      return { ...defaultLibraryViewPrefs };
     }
     const parsed = JSON.parse(raw) as Partial<LibraryViewPrefs>;
     return {
@@ -141,16 +148,16 @@ export function loadLibraryViewPrefs(): LibraryViewPrefs {
           ? parsed.filter
           : "all",
       sort:
+        parsed.sort === "name" ||
         parsed.sort === "recent" ||
-        parsed.sort === "chapters" ||
-        parsed.sort === "updated"
+        parsed.sort === "chapters"
           ? parsed.sort
-          : "name",
+          : "updated",
       sortDesc: parsed.sortDesc === true,
       query: parsed.query ?? "",
     };
   } catch {
-    return { filter: "all", sort: "name", sortDesc: false, query: "" };
+    return { ...defaultLibraryViewPrefs };
   }
 }
 

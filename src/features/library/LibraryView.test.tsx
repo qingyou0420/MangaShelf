@@ -92,22 +92,28 @@ describe("LibraryView toolbar", () => {
     expect(onReadComic).toHaveBeenCalledWith(comics[1]);
   });
 
-  it("shows recently updated comics on the home strip", () => {
+  it("marks updated titles on the cover and defaults to recent-update sort", () => {
     render(
       <LibraryView
         comics={[
+          comics[1],
           {
             ...comics[0],
             shelfUpdatedAt: "2026-08-21 12:00:00",
-            shelfUpdateNote: "新书",
+            shelfUpdateNote: "更新了2话",
           },
         ]}
         onOpenSeries={() => undefined}
       />,
     );
-    expect(screen.getByRole("region", { name: "最近更新" })).toBeInTheDocument();
-    expect(screen.getByText("新书")).toBeInTheDocument();
-    expect(screen.getByText("导入之后新增的书和话")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "最近更新" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("排序")).toHaveValue("updated");
+    expect(screen.getByText("更新了2话")).toBeInTheDocument();
+    const titles = Array.from(document.querySelectorAll(".library-tile h2")).map(
+      (node) => node.textContent,
+    );
+    expect(titles[0]).toBe("已匹配书");
+    expect(titles[1]).toBe("收藏书");
   });
 
   it("offers a one-time import before the library baseline exists", () => {
@@ -115,7 +121,7 @@ describe("LibraryView toolbar", () => {
       <LibraryView comics={[]} onScanLibrary={() => undefined} />,
     );
     expect(screen.getByRole("button", { name: "导入现有书库" })).toBeInTheDocument();
-    expect(screen.getByText(/不会把已有漫画标成最近更新/)).toBeInTheDocument();
+    expect(screen.getByText(/不会把它们标成更新/)).toBeInTheDocument();
     expect(screen.getByText(/首次导入会索引全部已有漫画/)).toBeInTheDocument();
   });
 
@@ -152,7 +158,7 @@ describe("LibraryView toolbar", () => {
   it("explains empty library without mentioning external platforms", () => {
     render(<LibraryView comics={[]} />);
     expect(screen.getByText("书库还是空的")).toBeInTheDocument();
-    expect(screen.getByText(/不会把已有漫画标成最近更新/)).toBeInTheDocument();
+    expect(screen.getByText(/不会把已有漫画标成更新/)).toBeInTheDocument();
     expect(screen.queryByText(/漫画控/)).not.toBeInTheDocument();
   });
 });
