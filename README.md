@@ -29,7 +29,7 @@
 
 ## 版本与更新
 
-- 版本号与 `package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` 保持一致（当前 `2.5.2`）。
+- 版本号与 `package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` 保持一致（当前 `2.5.3`）。
 - 启动时向 GitHub Releases 查询是否有更高版本。
 - 发现更新时：侧栏版本号旁显示「更新 vX.Y.Z」；设置页可「检查更新」并下载安装。
 

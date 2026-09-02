@@ -319,7 +319,7 @@ describe("App", () => {
     render(<App />);
     await screen.findAllByText("婚纱之中待到花火散去");
     expect(screen.queryByRole("button", { name: "历史" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /继续$/ }));
+    await user.click(screen.getByRole("button", { name: "继续阅读" }));
     expect(await screen.findByAltText("第01话 第 2 页")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "返回书库" }));
     expect(screen.getByRole("heading", { name: "书库" })).toBeInTheDocument();

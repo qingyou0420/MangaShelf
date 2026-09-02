@@ -68,7 +68,7 @@ describe("LibraryView toolbar", () => {
     await user.click(screen.getByRole("button", { name: "倒序排列" }));
     expect(screen.getByRole("button", { name: "切换为正序" })).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("筛选"), "favorited");
+    await user.click(screen.getByRole("button", { name: "收藏" }));
     expect(screen.getAllByText("收藏书").length).toBeGreaterThan(0);
     expect(screen.queryByText("已匹配书")).not.toBeInTheDocument();
   });
@@ -88,7 +88,7 @@ describe("LibraryView toolbar", () => {
     expect(screen.getByText("继续阅读")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "查看 已匹配书" }));
     expect(onOpenSeries).toHaveBeenCalledWith(comics[0]);
-    await user.click(screen.getByRole("button", { name: /继续$/ }));
+    await user.click(screen.getByRole("button", { name: "继续阅读" }));
     expect(onReadComic).toHaveBeenCalledWith(comics[1]);
   });
 
@@ -107,7 +107,7 @@ describe("LibraryView toolbar", () => {
       />,
     );
     expect(screen.queryByRole("region", { name: "最近更新" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("排序")).toHaveValue("updated");
+    expect(screen.getByLabelText("排序")).toHaveTextContent("最近更新");
     expect(screen.getByText("更新了2话")).toBeInTheDocument();
     const titles = Array.from(document.querySelectorAll(".library-tile h2")).map(
       (node) => node.textContent,
@@ -121,8 +121,15 @@ describe("LibraryView toolbar", () => {
       <LibraryView comics={[]} onScanLibrary={() => undefined} />,
     );
     expect(screen.getByRole("button", { name: "导入现有书库" })).toBeInTheDocument();
-    expect(screen.getByText(/不会把它们标成更新/)).toBeInTheDocument();
-    expect(screen.getByText(/首次导入会索引全部已有漫画/)).toBeInTheDocument();
+    expect(screen.getByText(/不会改动或删除文件/)).toBeInTheDocument();
+    expect(screen.queryByText(/首次导入会索引全部已有漫画/)).not.toBeInTheDocument();
+  });
+
+  it("shows a one-line baseline hint when titles exist but the baseline does not", () => {
+    render(
+      <LibraryView comics={comics} onScanLibrary={() => undefined} />,
+    );
+    expect(screen.getByText("首次导入只建立索引，不会标记更新。")).toBeInTheDocument();
   });
 
   it("filters by tag when a tag label is clicked", async () => {
@@ -158,7 +165,7 @@ describe("LibraryView toolbar", () => {
   it("explains empty library without mentioning external platforms", () => {
     render(<LibraryView comics={[]} />);
     expect(screen.getByText("书库还是空的")).toBeInTheDocument();
-    expect(screen.getByText(/不会把已有漫画标成更新/)).toBeInTheDocument();
+    expect(screen.getByText(/不会改动或删除文件/)).toBeInTheDocument();
     expect(screen.queryByText(/漫画控/)).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 [package]
 name = "manga-library"
-version = "2.5.2"
+version = "2.5.3"
 description = "MangaShelf（漫画书架）— local offline manga library and reader"
 authors = ["Shuangyue"]
 edition = "2021"

@@ -104,7 +104,8 @@ describe("SeriesView", () => {
     );
 
     expect(screen.getByRole("button", { name: /第01卷/ })).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("章节类型"), "volume");
+    await user.click(screen.getByLabelText("章节类型"));
+    await user.click(screen.getByRole("option", { name: "卷" }));
     expect(screen.getByRole("button", { name: /第01卷/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /第01话/ })).not.toBeInTheDocument();
   });

@@ -6,6 +6,7 @@ import { SeriesView } from "./features/library/SeriesView";
 import { ReaderView } from "./features/reader/ReaderView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { useAppUpdate } from "./hooks/useAppUpdate";
+import { useConfirm } from "./hooks/useConfirm";
 import { useLibrarySession } from "./hooks/useLibrarySession";
 import { useToast } from "./hooks/useToast";
 import { listCoverCandidates, openPath, setComicCover } from "./lib/api";
@@ -26,6 +27,7 @@ function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("library");
   const [theme, setTheme] = useState<"light" | "dark">(loadTheme);
   const { toastMessage, showToast } = useToast();
+  const { confirm, dialog } = useConfirm();
   const {
     appVersion,
     availableAppUpdate,
@@ -63,7 +65,7 @@ function App() {
     setSeriesComic,
     setStatusMessage,
     replaceComic,
-  } = useLibrarySession(showToast);
+  } = useLibrarySession(showToast, confirm);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -104,6 +106,7 @@ function App() {
           {toastMessage}
         </div>
       )}
+      {dialog}
       {!isReading && (
         <aside className="sidebar" aria-label="主导航">
           <div className="brand-block">
@@ -251,6 +254,7 @@ function App() {
               <SettingsView
                 paths={paths}
                 onSavePaths={applyPaths}
+                onNotify={showToast}
                 appVersion={appVersion}
                 theme={theme}
                 onThemeChange={(next) => setTheme(saveTheme(next))}

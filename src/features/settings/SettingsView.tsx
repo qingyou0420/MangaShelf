@@ -8,6 +8,7 @@ import {
   openPath,
   pickDirectory,
 } from "../../lib/api";
+import { Select } from "../../components/Select";
 import {
   databasePathFor,
   loadReaderDefaults,
@@ -28,6 +29,7 @@ import type {
 interface SettingsViewProps {
   paths: LibraryPaths;
   onSavePaths?: (paths: LibraryPaths) => void;
+  onNotify?: (message: string) => void;
   /** When provided, skip loading version from backend (tests / shell). */
   appVersion?: string;
   theme?: "light" | "dark";
@@ -37,6 +39,7 @@ interface SettingsViewProps {
 export function SettingsView({
   paths,
   onSavePaths,
+  onNotify,
   appVersion: appVersionProp,
   theme: themeProp,
   onThemeChange,
@@ -44,7 +47,6 @@ export function SettingsView({
   const [appVersion, setAppVersion] = useState(appVersionProp ?? "…");
   const [bookshelfRoot, setBookshelfRoot] = useState(paths.bookshelfRoot);
   const [databasePath, setDatabasePath] = useState(paths.databasePath);
-  const [pathMessage, setPathMessage] = useState<string>();
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updateResult, setUpdateResult] = useState<LocalUpdateCheckResult>();
   const [updateError, setUpdateError] = useState<string>();
@@ -106,10 +108,16 @@ export function SettingsView({
       databasePath: nextDatabase.trim() || databasePathFor(nextRoot),
       extraRoots: nextExtras,
     };
+    const sameRoot = next.bookshelfRoot === paths.bookshelfRoot;
+    const sameDatabase = next.databasePath === paths.databasePath;
+    const sameExtras =
+      JSON.stringify(next.extraRoots) === JSON.stringify(paths.extraRoots ?? []);
     setBookshelfRoot(next.bookshelfRoot);
     setDatabasePath(next.databasePath);
+    if (sameRoot && sameDatabase && sameExtras) {
+      return;
+    }
     onSavePaths?.(next);
-    setPathMessage("已保存本地路径，下次扫描将使用新位置。");
   }
 
   async function handlePickBookshelf() {
@@ -121,7 +129,7 @@ export function SettingsView({
       }
       persistPaths(picked, databasePathFor(picked));
     } catch (error) {
-      setPathMessage(
+      onNotify?.(
         error instanceof Error ? error.message : String(error ?? "无法选择文件夹"),
       );
     } finally {
@@ -169,12 +177,14 @@ export function SettingsView({
         <h1 id="settings-title">设置</h1>
       </div>
 
-      <section className="panel settings-panel" aria-label="本地书架">
+      <section className="panel settings-panel" aria-label="书架">
+        <h2>书架</h2>
         <label className="settings-kv path-kv">
           <span>书架</span>
           <input
             value={bookshelfRoot}
             onChange={(event) => setBookshelfRoot(event.target.value)}
+            onBlur={() => persistPaths(bookshelfRoot, databasePath)}
             aria-label="书架路径"
           />
         </label>
@@ -194,19 +204,7 @@ export function SettingsView({
           >
             打开文件夹
           </button>
-          <button
-            type="button"
-            className="compact-action"
-            onClick={() => persistPaths(bookshelfRoot, databasePath)}
-          >
-            保存路径
-          </button>
         </div>
-        {pathMessage && (
-          <p className="settings-update-msg" role="status">
-            {pathMessage}
-          </p>
-        )}
         <details className="settings-advanced">
           <summary>高级：索引库路径</summary>
           <label className="settings-kv path-kv">
@@ -214,13 +212,15 @@ export function SettingsView({
             <input
               value={databasePath}
               onChange={(event) => setDatabasePath(event.target.value)}
+              onBlur={() => persistPaths(bookshelfRoot, databasePath)}
               aria-label="索引库路径"
             />
           </label>
+          <p className="settings-hint">
+            首次导入只建立索引，不会标记更新。之后只有新书和新话会排在前面并在封面标出更新。
+          </p>
         </details>
-        <p className="settings-hint">
-          书库只读取你指定的本地文件夹。首次「导入现有书库」会索引全部已有文件夹，不会标成更新。之后启动时和回到窗口时会自动扫描，只有新书文件夹和新话文件夹会排在前面并在封面标出更新了几话。扫描不会删除漫画文件。
-        </p>
+        <p className="settings-hint">仅读取本地文件夹，不会修改或删除文件。</p>
         <div className="settings-update-actions">
           <button
             type="button"
@@ -261,81 +261,77 @@ export function SettingsView({
         )}
       </section>
 
-      <section className="panel settings-panel" aria-label="阅读默认">
+      <section className="panel settings-panel" aria-label="阅读">
+        <h2>阅读</h2>
         <div className="settings-kv">
           <span>方向</span>
-          <select
-            aria-label="默认阅读方向"
+          <Select
+            label="默认阅读方向"
             value={readerDefaults.readingDirection}
-            onChange={(event) => {
-              const next = {
-                ...readerDefaults,
-                readingDirection: event.target.value as ReadingDirection,
-              };
-              setReaderDefaults(saveReaderDefaults(next));
+            options={[
+              { value: "ltr", label: "左开" },
+              { value: "rtl", label: "右开" },
+            ]}
+            onChange={(readingDirection: ReadingDirection) => {
+              setReaderDefaults(
+                saveReaderDefaults({ ...readerDefaults, readingDirection }),
+              );
             }}
-          >
-            <option value="ltr">左开</option>
-            <option value="rtl">右开</option>
-          </select>
+          />
         </div>
         <div className="settings-kv">
           <span>适配</span>
-          <select
-            aria-label="默认页面适配"
+          <Select
+            label="默认页面适配"
             value={readerDefaults.fitMode}
-            onChange={(event) => {
-              const next = {
-                ...readerDefaults,
-                fitMode: event.target.value as FitMode,
-              };
-              setReaderDefaults(saveReaderDefaults(next));
+            options={[
+              { value: "contain", label: "适应" },
+              { value: "width", label: "宽度" },
+              { value: "height", label: "高度" },
+              { value: "original", label: "原图" },
+            ]}
+            onChange={(fitMode: FitMode) => {
+              setReaderDefaults(saveReaderDefaults({ ...readerDefaults, fitMode }));
             }}
-          >
-            <option value="contain">适应</option>
-            <option value="width">宽度</option>
-            <option value="height">高度</option>
-            <option value="original">原图</option>
-          </select>
+          />
         </div>
         <div className="settings-kv">
           <span>模式</span>
-          <select
-            aria-label="默认阅读模式"
+          <Select
+            label="默认阅读模式"
             value={readerDefaults.readMode}
-            onChange={(event) => {
-              const next = {
-                ...readerDefaults,
-                readMode: event.target.value as ReadMode,
-              };
-              setReaderDefaults(saveReaderDefaults(next));
+            options={[
+              { value: "page", label: "翻页" },
+              { value: "scroll", label: "滚动" },
+              { value: "spread", label: "双页" },
+            ]}
+            onChange={(readMode: ReadMode) => {
+              setReaderDefaults(saveReaderDefaults({ ...readerDefaults, readMode }));
             }}
-          >
-            <option value="page">翻页</option>
-            <option value="scroll">滚动</option>
-            <option value="spread">双页</option>
-          </select>
+          />
         </div>
         <p className="settings-hint">只作用于还没有阅读记录的新书。</p>
-        <div className="settings-kv">
-          <span>外观</span>
-          <select
-            aria-label="界面外观"
-            value={theme}
-            onChange={(event) => {
-              const next = event.target.value === "dark" ? "dark" : "light";
-              setTheme(saveTheme(next));
-              document.documentElement.dataset.theme = next;
-              onThemeChange?.(next);
-            }}
-          >
-            <option value="light">浅色</option>
-            <option value="dark">夜间</option>
-          </select>
-        </div>
       </section>
 
-      <section className="panel settings-panel" aria-label="缓存">
+      <section className="panel settings-panel" aria-label="外观与缓存">
+        <h2>外观与缓存</h2>
+        <div className="settings-kv">
+          <span>外观</span>
+          <Select
+            label="界面外观"
+            value={theme}
+            options={[
+              { value: "light", label: "浅色" },
+              { value: "dark", label: "夜间" },
+            ]}
+            onChange={(next) => {
+              const resolved = next === "dark" ? "dark" : "light";
+              setTheme(saveTheme(resolved));
+              document.documentElement.dataset.theme = resolved;
+              onThemeChange?.(resolved);
+            }}
+          />
+        </div>
         <div className="settings-update-actions">
           <button
             type="button"
@@ -395,6 +391,7 @@ export function SettingsView({
       </section>
 
       <section className="panel settings-panel" aria-label="关于">
+        <h2>关于</h2>
         <div className="settings-kv">
           <span>版本</span>
           <strong data-testid="app-version">v{appVersion}</strong>
@@ -408,10 +405,6 @@ export function SettingsView({
           >
             {isCheckingUpdate ? "检查中…" : "检查更新"}
           </button>
-          <p className="settings-hint">
-            从 GitHub 仓库{" "}
-            <code>qingyou0420/MangaShelf</code> 获取最新安装包
-          </p>
         </div>
         {updateError && (
           <p className="settings-update-msg error" role="alert">
@@ -427,10 +420,6 @@ export function SettingsView({
                   <strong data-testid="update-latest-version">
                     v{latest.version}
                   </strong>
-                </div>
-                <div className="settings-kv path-kv">
-                  <span>安装包</span>
-                  <code title={latest.path}>{latest.fileName}</code>
                 </div>
                 <div className="settings-update-actions">
                   <button
@@ -449,21 +438,8 @@ export function SettingsView({
               </p>
             ) : (
               <p className="settings-update-msg" data-testid="update-status">
-                未找到更新包。发布后会显示在{" "}
-                <code>github.com/qingyou0420/MangaShelf/releases</code>
+                未找到更新包
               </p>
-            )}
-            {updateResult.searchedDirs.length > 0 && (
-              <details className="settings-searched-dirs">
-                <summary>已扫描目录（{updateResult.searchedDirs.length}）</summary>
-                <ul>
-                  {updateResult.searchedDirs.map((dir) => (
-                    <li key={dir}>
-                      <code>{dir}</code>
-                    </li>
-                  ))}
-                </ul>
-              </details>
             )}
           </div>
         )}

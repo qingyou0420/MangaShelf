@@ -1,13 +1,8 @@
 import { useMemo, useState } from "react";
-import {
-  BookMarked,
-  ChevronLeft,
-  FolderOpen,
-  Pencil,
-  RefreshCw,
-  Star,
-} from "lucide-react";
+import { BookMarked, ChevronLeft, Star } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { OverflowMenu } from "../../components/OverflowMenu";
+import { Select } from "../../components/Select";
 import { lastReadChapterLabel } from "../../lib/progress";
 import type { LibraryComic, LocalChapter } from "../../lib/types";
 import { MetadataDialog } from "./MetadataDialog";
@@ -77,6 +72,12 @@ export function SeriesView({
 
       <div className="series-layout">
         <div className="series-hero">
+          {comic.coverPath && (
+            <div
+              className="series-hero-glow"
+              style={{ backgroundImage: `url("${convertFileSrc(comic.coverPath)}")` }}
+            />
+          )}
           {comic.coverPath ? (
             <img
               className="series-cover"
@@ -123,54 +124,41 @@ export function SeriesView({
               >
                 <Star size={16} fill={comic.favorited ? "currentColor" : "none"} />
               </button>
-              <button
-                type="button"
-                className="icon-action"
-                aria-label="编辑元数据"
-                onClick={() => setEditing(true)}
-              >
-                <Pencil size={16} />
-              </button>
-              {comic.localPath && (
-                <button
-                  type="button"
-                  className="secondary-action compact-action"
-                  onClick={() => onOpenFolder?.(comic.localPath ?? "")}
-                >
-                  <FolderOpen size={15} aria-hidden="true" />
-                  打开文件夹
-                </button>
-              )}
-              {comic.localPath && (
-                <button
-                  type="button"
-                  className="secondary-action compact-action"
-                  onClick={() => onRescan?.(comic)}
-                >
-                  <RefreshCw size={15} aria-hidden="true" />
-                  重新扫描
-                </button>
-              )}
-              {comic.localPath && onListCovers && (
-                <button
-                  type="button"
-                  className="secondary-action compact-action"
-                  onClick={() => {
-                    void onListCovers(comic).then(setCoverCandidates);
-                  }}
-                >
-                  选择封面
-                </button>
-              )}
-              {onClearProgress && comic.lastReadAt && (
-                <button
-                  type="button"
-                  className="secondary-action compact-action"
-                  onClick={() => onClearProgress(comic)}
-                >
-                  清除进度
-                </button>
-              )}
+              <OverflowMenu
+                items={[
+                  {
+                    id: "edit",
+                    label: "编辑元数据",
+                    onSelect: () => setEditing(true),
+                  },
+                  {
+                    id: "folder",
+                    label: "打开文件夹",
+                    hidden: !comic.localPath,
+                    onSelect: () => onOpenFolder?.(comic.localPath ?? ""),
+                  },
+                  {
+                    id: "rescan",
+                    label: "重新扫描",
+                    hidden: !comic.localPath,
+                    onSelect: () => onRescan?.(comic),
+                  },
+                  {
+                    id: "cover",
+                    label: "选择封面",
+                    hidden: !comic.localPath || !onListCovers,
+                    onSelect: () => {
+                      void onListCovers?.(comic).then(setCoverCandidates);
+                    },
+                  },
+                  {
+                    id: "clear",
+                    label: "清除进度",
+                    hidden: !onClearProgress || !comic.lastReadAt,
+                    onSelect: () => onClearProgress?.(comic),
+                  },
+                ]}
+              />
             </div>
             {continueLabel && (
               <p className="muted">
@@ -184,47 +172,41 @@ export function SeriesView({
         </div>
 
         <div className="series-chapters">
-          <h2>目录</h2>
-          {chapters.length > 0 && (
-            <label className="toolbar-select">
-              <span className="toolbar-group-label">类型</span>
-              <select
-                aria-label="章节类型"
+          <div className="series-chapters-head">
+            <h2>目录</h2>
+            {chapters.length > 0 && (
+              <Select
+                label="章节类型"
                 value={kindFilter}
-                onChange={(event) =>
-                  setKindFilter(
-                    event.target.value as
-                      | "all"
-                      | "regular"
-                      | "volume"
-                      | "machine_translation"
-                      | "other",
-                  )
-                }
-              >
-                <option value="all">全部</option>
-                <option value="regular">话</option>
-                <option value="volume">卷</option>
-                <option value="machine_translation">机翻</option>
-                <option value="other">其他</option>
-              </select>
-            </label>
-          )}
+                options={[
+                  { value: "all", label: "全部" },
+                  { value: "regular", label: "话" },
+                  { value: "volume", label: "卷" },
+                  { value: "machine_translation", label: "机翻" },
+                  { value: "other", label: "其他" },
+                ]}
+                onChange={setKindFilter}
+              />
+            )}
+          </div>
           {visibleChapters.length === 0 ? (
             <p className="muted">{chaptersMessage || "无章节"}</p>
           ) : (
             <ul className="series-chapter-list">
               {visibleChapters.map((chapter) => {
                 const isCurrent = comic.lastReadChapterId === chapter.id;
+                const isRead = chapter.readProgressPage > 0 && !isCurrent;
                 return (
                   <li key={chapter.id}>
                     <button
                       type="button"
-                      className={
-                        isCurrent
-                          ? "series-chapter-item current"
-                          : "series-chapter-item"
-                      }
+                      className={[
+                        "series-chapter-item",
+                        isCurrent ? "current" : "",
+                        isRead ? "read" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
                       disabled={!canRead}
                       onClick={() => onRead?.(comic, chapter)}
                     >

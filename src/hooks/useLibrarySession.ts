@@ -51,7 +51,19 @@ function allowRoots(paths: LibraryPaths) {
   }
 }
 
-export function useLibrarySession(showToast: (message: string) => void) {
+function idleStatus(comicCount: number, baselineCompleted: boolean): string {
+  if (comicCount > 0) {
+    return `已载入 ${comicCount} 部本地漫画`;
+  }
+  return baselineCompleted
+    ? "书库为空，扫描本地书架即可开始"
+    : "书库为空，先导入现有书库作为基准";
+}
+
+export function useLibrarySession(
+  showToast: (message: string) => void,
+  confirm: (message: string) => Promise<boolean>,
+) {
   const [paths, setPaths] = useState<LibraryPaths>(loadStoredPaths);
   const [comics, setComics] = useState<LibraryComic[]>([]);
   const [seriesComic, setSeriesComic] = useState<LibraryComic>();
@@ -183,13 +195,16 @@ export function useLibrarySession(showToast: (message: string) => void) {
               showToast("请拖入文件夹作为书架根目录");
               return;
             }
-            if (window.confirm(`将书架设为：\n${dropped}`)) {
+            void confirm(`将书架设为：\n${dropped}`).then((accepted) => {
+              if (!accepted) {
+                return;
+              }
               applyPaths({
                 bookshelfRoot: dropped,
                 databasePath: databasePathFor(dropped),
                 extraRoots: loadStoredPaths().extraRoots,
               });
-            }
+            });
           });
         }),
       )
@@ -211,11 +226,7 @@ export function useLibrarySession(showToast: (message: string) => void) {
         });
         setPaths(nextPaths);
         setStatusMessage(
-          result.comics.length > 0
-            ? `已载入 ${result.comics.length} 部本地漫画`
-            : result.baselineCompleted
-              ? "书库为空，扫描本地书架即可开始"
-              : "书库为空，先导入现有书库作为基准",
+          idleStatus(result.comics.length, Boolean(result.baselineCompleted)),
         );
         const exists = await pathIsDirectory(nextPaths.bookshelfRoot);
         if (cancelled || !exists) {
@@ -252,7 +263,7 @@ export function useLibrarySession(showToast: (message: string) => void) {
       dropUnlisten?.();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [showToast]);
+  }, [showToast, confirm]);
 
   async function runScan(scanPaths: LibraryPaths, quiet = false) {
     if (scanningRef.current) {
@@ -303,8 +314,10 @@ export function useLibrarySession(showToast: (message: string) => void) {
           : quiet && changed
             ? `书架有更新：新书 ${result.added}，新内容 ${result.updated}${failed}${failedHint}`
             : `扫描完成：新增 ${result.added}，有变化 ${result.updated}，未变 ${result.unchanged ?? 0}，未匹配 ${result.missing}${failed}${failedHint}`;
+      setStatusMessage(
+        idleStatus(result.comics.length, Boolean(result.baselineCompleted)),
+      );
       if (!quiet || changed || result.establishedBaseline || scanCancelledRef.current) {
-        setStatusMessage(summary);
         showToast(summary);
       }
     } catch (cause) {
@@ -487,11 +500,7 @@ export function useLibrarySession(showToast: (message: string) => void) {
         });
         setPaths(merged);
         setStatusMessage(
-          result.comics.length > 0
-            ? `已载入 ${result.comics.length} 部本地漫画`
-            : result.baselineCompleted
-              ? "书库为空，扫描本地书架即可开始"
-              : "书库为空，先导入现有书库作为基准",
+          idleStatus(result.comics.length, Boolean(result.baselineCompleted)),
         );
         const exists = await pathIsDirectory(merged.bookshelfRoot);
         if (exists) {
@@ -504,7 +513,7 @@ export function useLibrarySession(showToast: (message: string) => void) {
   }
 
   async function handleDeleteComic(comic: LibraryComic) {
-    if (!window.confirm(`从索引删除「${comic.name}」？不会删除磁盘上的文件。`)) {
+    if (!(await confirm(`从索引删除「${comic.name}」？不会删除磁盘上的文件。`))) {
       return;
     }
     try {
@@ -539,7 +548,7 @@ export function useLibrarySession(showToast: (message: string) => void) {
   }
 
   async function handleClearProgress(comic: LibraryComic) {
-    if (!window.confirm(`清除「${comic.name}」的阅读进度？`)) {
+    if (!(await confirm(`清除「${comic.name}」的阅读进度？`))) {
       return;
     }
     try {

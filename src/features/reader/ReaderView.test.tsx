@@ -79,7 +79,7 @@ describe("ReaderView", () => {
     await user.click(screen.getByRole("button", { name: "目录" }));
     expect(screen.getByRole("button", { name: "第01话 2 页" })).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("button", { name: "上一页" })[0]);
+    await user.keyboard("{ArrowLeft}");
     expect(screen.getByAltText("第01话 第 1 页")).toBeInTheDocument();
   });
 
@@ -122,7 +122,7 @@ describe("ReaderView", () => {
     );
 
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await user.keyboard("{ArrowRight}");
     expect(await screen.findByAltText("第02话 第 1 页")).toBeInTheDocument();
   });
 
@@ -221,8 +221,54 @@ describe("ReaderView", () => {
     await user.click(screen.getByRole("button", { name: "封面单独" }));
     expect(screen.getByAltText("第01话 第 2 页")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await user.keyboard("{ArrowRight}");
     expect(screen.getByAltText("第01话 第 3 页")).toBeInTheDocument();
     expect(screen.getByAltText("第01话 第 4 页")).toBeInTheDocument();
+  });
+
+  it("marks the current read mode and opens shortcuts with ?", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReaderView
+        comic={{ ...comic, lastReadAt: "2026-08-17 12:00:00" }}
+        onBack={() => undefined}
+        service={{
+          scanChapters: async () => [
+            {
+              id: "local:a::第01话",
+              comicId: "local:a",
+              title: "第01话",
+              path: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+              ordinal: 1,
+              pageCount: 1,
+              readProgressPage: 0,
+              specialKind: "regular",
+            },
+          ],
+          listPages: async () => [
+            "E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg",
+          ],
+        }}
+        toImageSrc={(path) => `asset://${path}`}
+      />,
+    );
+
+    expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
+    expect(screen.queryByText(/Esc 返回/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("button", { name: "翻页" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "左开" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await user.keyboard("?");
+    expect(screen.getByRole("dialog", { name: "快捷键" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "快捷键" })).not.toBeInTheDocument();
   });
 });

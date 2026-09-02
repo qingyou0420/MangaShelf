@@ -71,9 +71,12 @@ describe("SettingsView version & local update", () => {
       defaultLibraryPaths.bookshelfRoot,
     );
     expect(screen.getByRole("button", { name: "选择文件夹" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存路径" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "书架" })).toBeInTheDocument();
     expect(screen.queryByText(/引擎/)).not.toBeInTheDocument();
     expect(screen.queryByText(/漫画控/)).not.toBeInTheDocument();
-    expect(screen.getByText(/首次「导入现有书库」会索引全部已有文件夹/)).toBeInTheDocument();
+    expect(screen.getByText("仅读取本地文件夹，不会修改或删除文件。")).toBeInTheDocument();
+    expect(screen.queryByText(/qingyou0420\/MangaShelf/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "检查更新" }));
 

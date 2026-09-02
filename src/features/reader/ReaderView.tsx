@@ -1,4 +1,5 @@
-import { ChevronLeft, MoveLeft, MoveRight } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
+import { Select } from "../../components/Select";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
 import { listChapterPages, listenExtractProgress, scanLocalChapters } from "../../lib/api";
@@ -70,6 +71,7 @@ export function ReaderView({
   const [readerMessage, setReaderMessage] = useState("从书库打开漫画");
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [nextChapterPreview, setNextChapterPreview] = useState<string>();
   const [chromeVisible, setChromeVisible] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
@@ -385,7 +387,17 @@ export function ReaderView({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      const typing = (event.target as HTMLElement | null)?.tagName === "INPUT";
+      if (event.key === "?" && !typing) {
+        event.preventDefault();
+        setHelpOpen((open) => !open);
+        return;
+      }
       if (event.key === "Escape") {
+        if (helpOpen) {
+          setHelpOpen(false);
+          return;
+        }
         if (!chromeRef.current) {
           revealChrome();
           return;
@@ -437,7 +449,7 @@ export function ReaderView({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onBack, comic, onToggleFavorite]);
+  }, [onBack, comic, onToggleFavorite, helpOpen]);
 
   const currentPage = pages[pageIndex];
   const showSpreadPair = !(spreadCover && pageIndex === 0);
@@ -575,19 +587,17 @@ export function ReaderView({
           >
             目录
           </button>
-          <label className="reader-fit-select">
-            <span className="sr-only">页面适配</span>
-            <select
-              value={fitMode}
-              aria-label="页面适配"
-              onChange={(event) => changeFit(event.target.value as FitMode)}
-            >
-              <option value="contain">适应</option>
-              <option value="width">宽度</option>
-              <option value="height">高度</option>
-              <option value="original">原图</option>
-            </select>
-          </label>
+          <Select
+            label="页面适配"
+            value={fitMode}
+            options={[
+              { value: "contain", label: "适应" },
+              { value: "width", label: "宽度" },
+              { value: "height", label: "高度" },
+              { value: "original", label: "原图" },
+            ]}
+            onChange={changeFit}
+          />
           <div className="reader-more">
             <button
               className={moreOpen ? "tool-button active" : "tool-button"}
@@ -598,45 +608,83 @@ export function ReaderView({
             </button>
             {moreOpen && (
               <div className="reader-more-menu">
-                <button type="button" className="tool-button" onClick={() => changeReadMode("page")}>翻页</button>
-                <button type="button" className="tool-button" onClick={() => changeReadMode("scroll")}>滚动</button>
-                <button type="button" className="tool-button" onClick={() => changeReadMode("spread")}>双页</button>
+                <div className="reader-more-group">
+                  <span className="reader-more-label">阅读模式</span>
+                  <div className="reader-more-row">
+                    <button
+                      type="button"
+                      className={readMode === "page" ? "tool-button active" : "tool-button"}
+                      aria-pressed={readMode === "page"}
+                      onClick={() => changeReadMode("page")}
+                    >
+                      翻页
+                    </button>
+                    <button
+                      type="button"
+                      className={readMode === "scroll" ? "tool-button active" : "tool-button"}
+                      aria-pressed={readMode === "scroll"}
+                      onClick={() => changeReadMode("scroll")}
+                    >
+                      滚动
+                    </button>
+                    <button
+                      type="button"
+                      className={readMode === "spread" ? "tool-button active" : "tool-button"}
+                      aria-pressed={readMode === "spread"}
+                      onClick={() => changeReadMode("spread")}
+                    >
+                      双页
+                    </button>
+                  </div>
+                </div>
                 {readMode === "spread" && (
                   <button
                     type="button"
                     className={spreadCover ? "tool-button active" : "tool-button"}
+                    aria-pressed={spreadCover}
                     onClick={() => setSpreadCover((value) => !value)}
                   >
                     封面单独
                   </button>
                 )}
-                <button type="button" className="tool-button" onClick={() => changeDirection("ltr")}>左开</button>
-                <button type="button" className="tool-button" onClick={() => changeDirection("rtl")}>右开</button>
+                <div className="reader-more-group">
+                  <span className="reader-more-label">方向</span>
+                  <div className="reader-more-row pair">
+                    <button
+                      type="button"
+                      className={direction === "ltr" ? "tool-button active" : "tool-button"}
+                      aria-pressed={direction === "ltr"}
+                      onClick={() => changeDirection("ltr")}
+                    >
+                      左开
+                    </button>
+                    <button
+                      type="button"
+                      className={direction === "rtl" ? "tool-button active" : "tool-button"}
+                      aria-pressed={direction === "rtl"}
+                      onClick={() => changeDirection("rtl")}
+                    >
+                      右开
+                    </button>
+                  </div>
+                </div>
                 <button type="button" className="tool-button" onClick={() => void toggleFullscreen()}>
                   {isFullscreen ? "退出全屏" : "全屏 F11"}
+                </button>
+                <button
+                  type="button"
+                  className="tool-button"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setHelpOpen(true);
+                  }}
+                >
+                  快捷键 ?
                 </button>
               </div>
             )}
           </div>
-          <button
-            className="tool-button"
-            type="button"
-            onClick={() => turnPage(direction === "rtl" ? 1 : -1)}
-            disabled={pages.length === 0 && chapters.length === 0}
-            aria-label="上一页"
-          >
-            <MoveLeft size={16} aria-hidden="true" />
-          </button>
           <span className="reader-page-count">{currentPageLabel}</span>
-          <button
-            className="tool-button"
-            type="button"
-            onClick={() => turnPage(direction === "rtl" ? -1 : 1)}
-            disabled={pages.length === 0 && chapters.length === 0}
-            aria-label="下一页"
-          >
-            <MoveRight size={16} aria-hidden="true" />
-          </button>
         </div>
       </header>
 
@@ -828,14 +876,49 @@ export function ReaderView({
             />
           )}
           <span className="muted">{currentPageLabel}</span>
-          <span className="muted reader-hint">
-            {readMode === "scroll"
-              ? "滚动阅读 · [ ] 上/下话 · F 收藏 · F11 全屏 · Esc 返回"
-              : direction === "rtl"
-                ? "← 下一页 · → 上一页 · [ ] 上/下话 · F 收藏 · F11 全屏 · Esc 返回"
-                : "← 上一页 · → 下一页 · [ ] 上/下话 · F 收藏 · F11 全屏 · Esc 返回"}
-          </span>
         </footer>
+      )}
+
+      {helpOpen && (
+        <div
+          className="reader-help"
+          role="dialog"
+          aria-label="快捷键"
+          onClick={() => setHelpOpen(false)}
+        >
+          <div
+            className="reader-help-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <strong>快捷键</strong>
+            <dl>
+              <div>
+                <dt>← → / A D / 空格</dt>
+                <dd>翻页</dd>
+              </div>
+              <div>
+                <dt>[ ]</dt>
+                <dd>上 / 下话</dd>
+              </div>
+              <div>
+                <dt>F</dt>
+                <dd>收藏</dd>
+              </div>
+              <div>
+                <dt>F11</dt>
+                <dd>全屏</dd>
+              </div>
+              <div>
+                <dt>Esc</dt>
+                <dd>返回</dd>
+              </div>
+              <div>
+                <dt>?</dt>
+                <dd>开关此面板</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
       )}
     </section>
   );

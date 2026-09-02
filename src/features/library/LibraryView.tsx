@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
+  AlertTriangle,
   ArrowDownUp,
   BookMarked,
   FolderOpen,
@@ -11,6 +12,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
+import { Select } from "../../components/Select";
 import {
   loadLibraryViewPrefs,
   saveLibraryViewPrefs,
@@ -79,6 +81,7 @@ export function LibraryView({
   const [query, setQuery] = useState(stored.query);
   const [editing, setEditing] = useState<LibraryComic>();
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [failedOpen, setFailedOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const continueComic = useMemo(() => {
@@ -204,6 +207,21 @@ export function LibraryView({
       <div className="view-header">
         <h1 id="library-title">书库</h1>
         <div className="view-actions">
+          {continueComic && onReadComic && (
+            <button
+              type="button"
+              className="continue-pill"
+              title={
+                continueChapter
+                  ? `${continueComic.name} · ${continueChapter}`
+                  : continueComic.name
+              }
+              onClick={() => onReadComic(continueComic)}
+            >
+              <Play size={14} aria-hidden="true" />
+              继续阅读
+            </button>
+          )}
           {isScanning && onCancelScan && (
             <button
               className="secondary-action"
@@ -220,8 +238,8 @@ export function LibraryView({
             disabled={isScanning}
             title={
               baselineCompleted
-                ? "扫描新出现的书文件夹和话文件夹。改文件、刷新封面不会标成更新。"
-                : "一次性导入现有书库。已有的书和话只建立索引，不会在封面上标更新。"
+                ? "只索引新增内容，不改动文件。"
+                : "首次导入不标记更新。"
             }
           >
             <FolderOpen size={16} aria-hidden="true" />
@@ -236,54 +254,13 @@ export function LibraryView({
         </div>
       </div>
 
-      {isScanning && scanProgress?.currentTitle && (
+      {!baselineCompleted &&
+        !bookshelfMissing &&
+        !isScanning &&
+        comics.length > 0 && (
         <p className="scan-progress-line muted">
-          正在处理 {scanProgress.currentTitle}
+          首次导入只建立索引，不会标记更新。
         </p>
-      )}
-
-      {!baselineCompleted && !bookshelfMissing && !isScanning && (
-        <p className="scan-progress-line muted">
-          首次导入会索引全部已有漫画，不会把它们标成更新。之后新书和新话会排在前面，并在封面标出更新了几话。
-        </p>
-      )}
-
-      {failedItems.length > 0 && (
-        <details className="scan-failed-list">
-          <summary>扫描失败 {failedItems.length} 本</summary>
-          <ul>
-            {failedItems.map((item) => (
-              <li key={item.title}>
-                <strong>{item.title}</strong>
-                <span className="muted"> {item.error}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {continueComic && onReadComic && (
-        <button
-          type="button"
-          className="continue-card"
-          onClick={() => onReadComic(continueComic)}
-        >
-          <BookCover comic={continueComic} compact />
-          <div className="continue-card-body">
-            <span className="muted">继续阅读</span>
-            <strong>{continueComic.name}</strong>
-            <span>
-              {continueChapter ? continueChapter : "本地漫画"}
-              {continueComic.readProgressPage > 0
-                ? ` · 第 ${continueComic.readProgressPage + 1} 页`
-                : ""}
-            </span>
-          </div>
-          <span className="continue-card-action">
-            <Play size={16} aria-hidden="true" />
-            继续
-          </span>
-        </button>
       )}
 
       <div className="library-toolbar">
@@ -298,36 +275,29 @@ export function LibraryView({
             aria-label="搜索书库"
           />
         </label>
-        <label className="toolbar-select">
-          <span className="toolbar-group-label">筛选</span>
-          <select
-            aria-label="筛选"
-            value={activeFilter}
-            onChange={(event) =>
-              setActiveFilter(event.target.value as LibraryFilter)
-            }
-          >
-            {filters.map((filter) => (
-              <option key={filter.id} value={filter.id}>
-                {filter.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="toolbar-select">
-          <span className="toolbar-group-label">排序</span>
-          <select
-            aria-label="排序"
-            value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as LibrarySort)}
-          >
-            {sorts.map((sort) => (
-              <option key={sort.id} value={sort.id}>
-                {sort.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="segmented" role="group" aria-label="筛选">
+          {filters.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className={
+                activeFilter === filter.id
+                  ? "segmented-item active"
+                  : "segmented-item"
+              }
+              aria-pressed={activeFilter === filter.id}
+              onClick={() => setActiveFilter(filter.id)}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <Select
+          label="排序"
+          value={sortBy}
+          options={sorts.map((sort) => ({ value: sort.id, label: sort.label }))}
+          onChange={setSortBy}
+        />
         <button
           type="button"
           className={sortDesc ? "icon-action active" : "icon-action"}
@@ -338,6 +308,32 @@ export function LibraryView({
         >
           <ArrowDownUp size={16} aria-hidden="true" />
         </button>
+        {failedItems.length > 0 && (
+          <div className="toolbar-alert">
+            <button
+              type="button"
+              className="icon-action"
+              aria-label={`扫描失败 ${failedItems.length} 本`}
+              aria-expanded={failedOpen}
+              onClick={() => setFailedOpen((open) => !open)}
+            >
+              <AlertTriangle size={15} />
+            </button>
+            {failedOpen && (
+              <div className="toolbar-alert-pop" role="status">
+                <strong>扫描失败 {failedItems.length} 本</strong>
+                <ul>
+                  {failedItems.map((item) => (
+                    <li key={item.title}>
+                      <strong>{item.title}</strong>
+                      <span className="muted"> {item.error}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
         <span className="library-count muted">
           {visibleComics.length}
           {comics.length > 0 ? ` / ${comics.length}` : ""}
@@ -376,7 +372,7 @@ export function LibraryView({
                   }
                 }}
               >
-                <div className="cover-frame">
+                <div className={comic.coverPath ? "cover-frame" : "cover-frame is-empty"}>
                   <BookCover comic={comic} />
                   {updateBadge && (
                     <span className="cover-update-badge">{updateBadge}</span>
@@ -539,48 +535,44 @@ function emptyHint(
   baselineCompleted = false,
 ): string {
   if (query.trim()) {
-    return "试试清空搜索，或换个关键词。";
+    return "换个关键词试试。";
   }
   if (total === 0) {
     return bookshelfMissing
-      ? "默认路径不存在。选择你的漫画文件夹后再导入。不会改动或删除文件。"
+      ? "选择漫画文件夹后再导入。"
       : baselineCompleted
-        ? "选择本地书架文件夹，然后点右上角「扫描书架」。不会改动或删除你的漫画文件。"
-        : "选择本地书架文件夹，然后点右上角「导入现有书库」。首次导入只建立索引，不会把已有漫画标成更新。";
+        ? "点右上角「扫描书架」。"
+        : "点右上角「导入现有书库」。不会改动或删除文件。";
   }
   switch (filter) {
     case "favorited":
-      return "把鼠标移到封面上，点星标即可收藏。";
+      return "在封面上点 ★";
     case "recent":
-      return "打开任意漫画阅读后，这里会出现最近记录。";
+      return "阅读后会出现在这里。";
     case "missing":
-      return "全部书目都已匹配到本地文件夹。";
+      return "全部书目都已匹配。";
     default:
-      return "调整筛选或搜索后再试。";
+      return "调整筛选后再试。";
   }
 }
 
-function BookCover({
-  comic,
-  compact = false,
-}: {
-  comic: LibraryComic;
-  compact?: boolean;
-}) {
+function BookCover({ comic }: { comic: LibraryComic }) {
+  const [loaded, setLoaded] = useState(!comic.coverPath);
   if (comic.coverPath) {
     return (
       <img
-        className={compact ? "book-cover compact" : "book-cover"}
+        className={loaded ? "book-cover" : "book-cover is-loading"}
         src={convertFileSrc(comic.coverPath)}
         alt=""
         loading="lazy"
+        onLoad={() => setLoaded(true)}
       />
     );
   }
 
   return (
-    <div className={compact ? "book-tile compact" : "book-tile"} aria-hidden="true">
-      <BookMarked size={compact ? 20 : 28} />
+    <div className="book-tile" aria-hidden="true">
+      <BookMarked size={28} />
     </div>
   );
 }
