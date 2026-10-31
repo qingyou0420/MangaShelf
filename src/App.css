@@ -1410,10 +1410,22 @@ button:disabled {
   max-width: 48%;
 }
 
+.reader-view:has(.reader-stage.scroll-mode) {
+  height: 100dvh;
+}
+
 .reader-stage.scroll-mode {
   display: block;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 0;
+}
+
+.reader-scroll-end {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: 32px 0 48px;
 }
 
 .reader-scroll {

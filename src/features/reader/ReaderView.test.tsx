@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ReaderView } from "./ReaderView";
 import type { LibraryComic } from "../../lib/types";
@@ -123,6 +123,100 @@ describe("ReaderView", () => {
 
     expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
     await user.keyboard("{ArrowRight}");
+    expect(await screen.findByAltText("第02话 第 1 页")).toBeInTheDocument();
+  });
+
+  it("长条模式滚到底部可直接进入下一话", async () => {
+    const chapterList = [
+      {
+        id: "local:a::第01话",
+        comicId: "local:a",
+        title: "第01话",
+        path: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+        ordinal: 1,
+        pageCount: 1,
+        readProgressPage: 0,
+        specialKind: "regular" as const,
+      },
+      {
+        id: "local:a::第02话",
+        comicId: "local:a",
+        title: "第02话",
+        path: "E:\\书架\\婚纱之中待到花火散去\\第02话",
+        ordinal: 2,
+        pageCount: 1,
+        readProgressPage: 0,
+        specialKind: "regular" as const,
+      },
+    ];
+    const { container } = render(
+      <ReaderView
+        comic={{ ...comic, readMode: "scroll", lastReadAt: "2026-08-17 12:00:00" }}
+        onBack={() => undefined}
+        service={{
+          scanChapters: async () => chapterList,
+          listPages: async (chapterPath) =>
+            chapterPath.includes("第02话")
+              ? ["E:\\书架\\婚纱之中待到花火散去\\第02话\\001.jpg"]
+              : ["E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg"],
+        }}
+        toImageSrc={(path) => `asset://${path}`}
+      />,
+    );
+
+    expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
+    // jsdom 中 scrollHeight/clientHeight 均为 0，视为已在底部
+    const stage = container.querySelector(".reader-stage.scroll-mode") as HTMLElement;
+    fireEvent.wheel(stage, { deltaY: 120 });
+    await waitFor(() =>
+      expect(screen.getByAltText("第02话 第 1 页")).toHaveAttribute(
+        "src",
+        "asset://E:\\书架\\婚纱之中待到花火散去\\第02话\\001.jpg",
+      ),
+    );
+    expect(screen.getByText("已是最后一话")).toBeInTheDocument();
+  });
+
+  it("长条模式末尾的下一话按钮可切换章节", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReaderView
+        comic={{ ...comic, readMode: "scroll", lastReadAt: "2026-08-17 12:00:00" }}
+        onBack={() => undefined}
+        service={{
+          scanChapters: async () => [
+            {
+              id: "local:a::第01话",
+              comicId: "local:a",
+              title: "第01话",
+              path: "E:\\书架\\婚纱之中待到花火散去\\第01话",
+              ordinal: 1,
+              pageCount: 1,
+              readProgressPage: 0,
+              specialKind: "regular",
+            },
+            {
+              id: "local:a::第02话",
+              comicId: "local:a",
+              title: "第02话",
+              path: "E:\\书架\\婚纱之中待到花火散去\\第02话",
+              ordinal: 2,
+              pageCount: 1,
+              readProgressPage: 0,
+              specialKind: "regular",
+            },
+          ],
+          listPages: async (chapterPath) =>
+            chapterPath.includes("第02话")
+              ? ["E:\\书架\\婚纱之中待到花火散去\\第02话\\001.jpg"]
+              : ["E:\\书架\\婚纱之中待到花火散去\\第01话\\001.jpg"],
+        }}
+        toImageSrc={(path) => `asset://${path}`}
+      />,
+    );
+
+    expect(await screen.findByAltText("第01话 第 1 页")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "下一话" }));
     expect(await screen.findByAltText("第02话 第 1 页")).toBeInTheDocument();
   });
 

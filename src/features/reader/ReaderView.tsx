@@ -1,7 +1,14 @@
 import { ChevronLeft } from "lucide-react";
 import { Select } from "../../components/Select";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type WheelEvent,
+} from "react";
 import { listChapterPages, listenExtractProgress, scanLocalChapters } from "../../lib/api";
 import { loadReaderDefaults } from "../../lib/defaults";
 import type {
@@ -106,6 +113,8 @@ export function ReaderView({
   const spreadCoverRef = useRef(spreadCover);
   const comicIdRef = useRef(comic?.id);
   const wheelLockRef = useRef(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const scrollTargetRef = useRef<"start" | "end" | null>(null);
   const heightsRef = useRef<Map<number, number>>(new Map());
   const [heightTick, setHeightTick] = useState(0);
   serviceRef.current = service;
@@ -194,6 +203,7 @@ export function ReaderView({
         setPages(nextPages);
         heightsRef.current = new Map();
         const pending = pendingPageRef.current;
+        scrollTargetRef.current = pending === "end" ? "end" : "start";
         if (pending === "end") {
           setPageIndex(lastSpreadStart(nextPages.length));
         } else if (pending === "start") {
@@ -220,6 +230,18 @@ export function ReaderView({
       cancelled = true;
     };
   }, [selectedChapter?.id, selectedChapter?.path]);
+
+  // 长条模式：换话后把滚动位置复位到开头（或从下一话往回翻时到结尾），
+  // 否则新章节会沿用上一话停在底部的 scrollTop。
+  useLayoutEffect(() => {
+    const target = scrollTargetRef.current;
+    const stage = stageRef.current;
+    if (!target || !stage || readMode !== "scroll" || pages.length === 0) {
+      return;
+    }
+    scrollTargetRef.current = null;
+    stage.scrollTop = target === "end" ? stage.scrollHeight : 0;
+  }, [pages, readMode]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -479,8 +501,47 @@ export function ReaderView({
     turnPage(goNext ? 1 : -1);
   }
 
+  function handleScrollWheel(event: WheelEvent<HTMLDivElement>) {
+    const stage = event.currentTarget;
+    const atBottom = stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 4;
+    const atTop = stage.scrollTop <= 4;
+    const goingDown = event.deltaY > 0;
+    if ((goingDown && !atBottom) || (!goingDown && !atTop) || event.deltaY === 0) {
+      return;
+    }
+    if (wheelLockRef.current) {
+      return;
+    }
+    wheelLockRef.current = true;
+    window.setTimeout(() => {
+      wheelLockRef.current = false;
+    }, 600);
+    goChapter(goingDown ? 1 : -1, goingDown ? "start" : "end");
+  }
+
+  function handleStageScroll(stage: HTMLDivElement) {
+    const images = Array.from(stage.querySelectorAll<HTMLImageElement>("img[data-index]"));
+    const stageTop = stage.getBoundingClientRect().top;
+    const mid = stage.clientHeight / 2;
+    let closest = pageIndexRef.current;
+    let best = Number.POSITIVE_INFINITY;
+    images.forEach((image) => {
+      const rect = image.getBoundingClientRect();
+      const center = rect.top - stageTop + rect.height / 2;
+      const delta = Math.abs(center - mid);
+      if (delta < best) {
+        best = delta;
+        closest = Number(image.dataset.index ?? "0");
+      }
+    });
+    if (closest !== pageIndexRef.current) {
+      setPageIndex(closest);
+    }
+  }
+
   function handleWheel(event: WheelEvent<HTMLDivElement>) {
     if (readMode === "scroll") {
+      handleScrollWheel(event);
       return;
     }
     if (Math.abs(event.deltaY) < 20) {
@@ -540,6 +601,8 @@ export function ReaderView({
     }
   }
 
+  const selectedIndex = chapters.findIndex((chapter) => chapter.id === selectedChapter?.id);
+  const hasNextChapter = selectedIndex >= 0 && selectedIndex < chapters.length - 1;
   const prevPage = pages[pageIndex - 1];
   const nextPage = pages[pageIndex + 1];
   const extractLabel =
@@ -723,33 +786,17 @@ export function ReaderView({
         )}
 
         <div
+          ref={stageRef}
           className={readMode === "scroll" ? "reader-stage scroll-mode" : "reader-stage"}
           onWheel={handleWheel}
+          onScroll={
+            readMode === "scroll"
+              ? (event) => handleStageScroll(event.currentTarget)
+              : undefined
+          }
         >
           {readMode === "scroll" && pages.length > 0 ? (
-            <div
-              className="reader-scroll"
-              onScroll={(event) => {
-                const node = event.currentTarget;
-                const images = Array.from(node.querySelectorAll("img"));
-                const mid = node.scrollTop + node.clientHeight / 2;
-                let closest = pageIndex;
-                let best = Number.POSITIVE_INFINITY;
-                images.forEach((image, offset) => {
-                  const start = Number(image.dataset.index ?? "0");
-                  const center = image.offsetTop + image.offsetHeight / 2;
-                  const delta = Math.abs(center - mid);
-                  if (delta < best) {
-                    best = delta;
-                    closest = start;
-                  }
-                  void offset;
-                });
-                if (closest !== pageIndex) {
-                  setPageIndex(closest);
-                }
-              }}
-            >
+            <div className="reader-scroll">
               <div
                 style={{
                   height: spacerPx(0, Math.max(0, pageIndex - 8)),
@@ -785,6 +832,19 @@ export function ReaderView({
                   ),
                 }}
               />
+              <div className="reader-scroll-end">
+                {hasNextChapter ? (
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => goChapter(1, "start")}
+                  >
+                    下一话
+                  </button>
+                ) : (
+                  <span className="muted">已是最后一话</span>
+                )}
+              </div>
             </div>
           ) : readMode === "spread" && currentPage && selectedChapter && !imageFailed ? (
             <button
